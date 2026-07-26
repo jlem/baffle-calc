@@ -348,3 +348,26 @@ tr:hover {
   background: rgba(244, 63, 94, 0.15);
   color: var(--accent-rose);
 }
+
+/* Footer Attribution */
+.app-footer {
+  text-align: center;
+  padding: 1.25rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-color);
+  background: rgba(11, 15, 25, 0.8);
+  margin-top: 1.5rem;
+}
+
+.app-footer a {
+  color: var(--primary-cyan);
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.app-footer a:hover {
+  color: #ffffff;
+  text-decoration: underline;
+}
