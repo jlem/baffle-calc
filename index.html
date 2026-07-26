@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Refractor Telescope Baffle Calculator & Raytracer</title>
+  <meta name="description" content="Client-only refractor telescope baffle size and position calculator with interactive raytracing based on Berfield minimum baffle guide.">
+  <link rel="stylesheet" href="./src/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Top Header Navigation -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon">🔭</div>
+      <span class="brand-title">Refractor Baffle Calculator</span>
+      <span class="badge-tag">Optics CAD Tool</span>
+    </div>
+
+    <div class="header-actions">
+      <div id="benchmarkBadge" class="benchmark-badge">
+        <span>Checking CAD Benchmark...</span>
+      </div>
+      <button id="btnExportCSV" class="btn">📊 Export CSV</button>
+      <button id="btnExportSVG" class="btn">📐 Export SVG CAD</button>
+      <button id="btnExportPNG" class="btn btn-primary">📷 Save Image</button>
+    </div>
+  </header>
+
+  <!-- Main Grid Layout -->
+  <main class="app-container">
+
+    <!-- Sidebar Controls -->
+    <aside class="sidebar">
+      
+      <!-- Telescope Parameters Card -->
+      <section class="card">
+        <div class="card-header">
+          <h2 class="card-title">⚙️ Telescope Geometry</h2>
+          <select id="presetSelect" style="width: auto; font-size: 0.78rem;">
+            <option value="">Load Preset...</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="inputDObj">
+            <span>Objective Clear Aperture (D<sub>obj</sub>)</span>
+            <span id="valDObj" class="form-val">60 mm</span>
+          </label>
+          <div class="input-row">
+            <input type="number" id="inputDObj" value="60" step="0.1" min="10" max="1000">
+            <span style="font-size:0.8rem; color:var(--text-muted)">mm</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="inputFocalLength">
+            <span>Objective Focal Length (F)</span>
+            <span id="valFocalLength" class="form-val">1200 mm</span>
+          </label>
+          <div class="input-row">
+            <input type="number" id="inputFocalLength" value="1200" step="1" min="50" max="10000">
+            <span style="font-size:0.8rem; color:var(--text-muted)">mm</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="inputDTube">
+            <span>Tube Inner Diameter (D<sub>tube</sub>)</span>
+            <span id="valDTube" class="form-val">67.3 mm</span>
+          </label>
+          <div class="input-row">
+            <input type="number" id="inputDTube" value="67.3" step="0.1" min="10" max="1000">
+            <span style="font-size:0.8rem; color:var(--text-muted)">mm</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="inputDField">
+            <span>Illuminated Field Diameter (d<sub>field</sub>)</span>
+            <span id="valDField" class="form-val">25 mm</span>
+          </label>
+          <div class="input-row">
+            <input type="number" id="inputDField" value="25" step="0.1" min="0" max="200">
+            <span style="font-size:0.8rem; color:var(--text-muted)">mm</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="inputLensOffset">
+            <span>Lens Position vs Tube Front (Δz)</span>
+            <span id="valLensOffset" class="form-val">-3 mm</span>
+          </label>
+          <div class="input-row">
+            <input type="number" id="inputLensOffset" value="-3" step="0.5" min="-200" max="200">
+            <span style="font-size:0.8rem; color:var(--text-muted)">mm</span>
+          </div>
+          <small style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+            Negative value means lens starts to the left (outside) of the physical tube front.
+          </small>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="inputTubeLength">
+            <span>Physical Tube Length</span>
+            <span id="valTubeLength" class="form-val">1008 mm</span>
+          </label>
+          <div class="input-row">
+            <input type="number" id="inputTubeLength" value="1008" step="1" min="50" max="10000">
+            <span style="font-size:0.8rem; color:var(--text-muted)">mm</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="selectAlgorithm">
+            <span>Baffle Raytrace Strategy</span>
+          </label>
+          <select id="selectAlgorithm">
+            <option value="strictZeroWall" selected>Strict Zero Tube Wall Visibility (CAD Match)</option>
+            <option value="minimumBaffle">Berfield Minimum Baffle Method (Reflection Rays)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="selectUnit">
+            <span>Display Units</span>
+          </label>
+          <select id="selectUnit">
+            <option value="mm" selected>Metric (mm)</option>
+            <option value="in">Imperial (inches)</option>
+          </select>
+        </div>
+      </section>
+
+      <!-- CAD Benchmark Validation Card -->
+      <section class="card benchmark-card">
+        <div class="card-header">
+          <h3 class="card-title">✅ CAD Verification Report</h3>
+          <span style="font-size:0.75rem; color:var(--accent-emerald);">Tolerance &le; 0.1mm</span>
+        </div>
+        <div id="benchmarkReport">
+          <!-- Populated by JavaScript -->
+        </div>
+      </section>
+    </aside>
+
+    <!-- Main Content Area -->
+    <section class="main-content">
+
+      <!-- Interactive Canvas Raytracer -->
+      <div class="card" style="padding: 1rem;">
+        <div class="card-header" style="margin-bottom: 0.5rem;">
+          <h2 class="card-title">✨ Interactive 2D Tube & Raytrace Visualizer</h2>
+          <div style="font-size: 0.8rem; color: var(--text-muted);">
+            Scroll to Zoom | Drag to Pan | Hover to Inspect
+          </div>
+        </div>
+
+        <div class="canvas-container">
+          <canvas id="raytraceCanvas"></canvas>
+          <div class="canvas-toolbar">
+            <button id="btnFitView" class="btn" style="padding: 0.25rem 0.6rem; font-size: 0.75rem;">🔍 Reset View</button>
+          </div>
+        </div>
+
+        <!-- Layer Toggles -->
+        <div class="toggle-group">
+          <label class="toggle-label"><input type="checkbox" id="chkLightCone" checked> Light Cone</label>
+          <label class="toggle-label"><input type="checkbox" id="chkRays" checked> Stray Rays</label>
+          <label class="toggle-label"><input type="checkbox" id="chkBaffles" checked> Baffles</label>
+          <label class="toggle-label"><input type="checkbox" id="chkLabels" checked> Labels</label>
+          <label class="toggle-label"><input type="checkbox" id="chkGrid" checked> Grid Ruler</label>
+        </div>
+      </div>
+
+      <!-- Baffle Dimensions Specification Table -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">📋 Baffle Dimension Specifications</h2>
+          <span id="baffleCountBadge" style="font-size:0.8rem; font-weight:600; color:var(--accent-emerald);">5 Baffles Calculated</span>
+        </div>
+
+        <div class="table-container">
+          <table id="baffleTable">
+            <thead>
+              <tr>
+                <th>Baffle #</th>
+                <th>Distance from Tube Front (Mechanical Origin)</th>
+                <th>Distance from Objective Lens</th>
+                <th>Distance to Focal Plane</th>
+                <th>Aperture Inner Diameter (⌀)</th>
+                <th>Outer Tube ID (⌀)</th>
+                <th>Vane Wall Height</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Populated by JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
