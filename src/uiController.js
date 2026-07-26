@@ -45,8 +45,6 @@ export class UIController {
       valTubeLength: document.getElementById('valTubeLength'),
 
       // Outputs
-      benchmarkBadge: document.getElementById('benchmarkBadge'),
-      benchmarkReport: document.getElementById('benchmarkReport'),
       baffleCountBadge: document.getElementById('baffleCountBadge'),
       baffleTableBody: document.querySelector('#baffleTable tbody'),
 
@@ -181,9 +179,6 @@ export class UIController {
 
     // Populate Baffle Table
     this._renderTable();
-
-    // Check CAD Benchmark
-    this._renderBenchmarkReport();
   }
 
   _renderTable() {
@@ -209,46 +204,5 @@ export class UIController {
       `;
       tbody.appendChild(tr);
     });
-  }
-
-  _renderBenchmarkReport() {
-    // Only test benchmark when using the user's specific CAD parameters setup
-    const validation = validateAgainstBenchmark(this.currentBaffleData.baffles);
-
-    const badge = this.dom.benchmarkBadge;
-    const reportContainer = this.dom.benchmarkReport;
-
-    if (validation.passed) {
-      badge.className = 'benchmark-badge';
-      badge.innerHTML = `<span>✓ CAD Benchmark PASSED (5/5 Baffles &le; 0.1mm)</span>`;
-    } else {
-      badge.className = 'benchmark-badge failed';
-      badge.innerHTML = `<span>⚠️ ${validation.message}</span>`;
-    }
-
-    // Populate Report Card
-    let html = `<div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.75rem;">
-      Comparison with CAD-verified baseline parameters (60mm aperture, F1200mm, D67.3mm tube, 25mm field, -3mm lens offset):
-    </div>`;
-
-    html += `<div style="display:flex; flex-direction:column; gap:0.4rem;">`;
-
-    validation.details.forEach(d => {
-      const statusClass = d.passed ? 'pass' : 'fail';
-      const statusIcon = d.passed ? '✓' : '✗';
-      html += `
-        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(15,23,42,0.6); padding:0.4rem 0.6rem; border-radius:6px; font-size:0.78rem;">
-          <div>
-            <strong>Baffle #${d.baffle}:</strong> ⌀${d.actual.d_baffle.toFixed(3)}mm @ ${d.actual.z_tube.toFixed(3)}mm
-          </div>
-          <div class="diff-tag ${statusClass}">
-            ${statusIcon} Δz: ${d.z_diff.toFixed(3)}mm
-          </div>
-        </div>
-      `;
-    });
-
-    html += `</div>`;
-    reportContainer.innerHTML = html;
   }
 }

@@ -21,9 +21,6 @@
     </div>
 
     <div class="header-actions">
-      <div id="benchmarkBadge" class="benchmark-badge">
-        <span>Checking CAD Benchmark...</span>
-      </div>
       <button id="btnExportCSV" class="btn">📊 Export CSV</button>
       <button id="btnExportSVG" class="btn">📐 Export SVG CAD</button>
       <button id="btnExportPNG" class="btn btn-primary">📷 Save Image</button>
@@ -91,7 +88,7 @@
 
         <div class="form-group">
           <label class="form-label" for="inputLensOffset">
-            <span>Lens Position vs Tube Front (Δz)</span>
+            <span>Lens Rear Position vs Tube Front (Δz)</span>
             <span id="valLensOffset" class="form-val">-3 mm</span>
           </label>
           <div class="input-row">
@@ -99,7 +96,7 @@
             <span style="font-size:0.8rem; color:var(--text-muted)">mm</span>
           </div>
           <small style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
-            Negative value means lens starts to the left (outside) of the physical tube front.
+            Negative value means lens rear surface is to the left (outside) of physical tube front.
           </small>
         </div>
 
@@ -132,17 +129,6 @@
             <option value="mm" selected>Metric (mm)</option>
             <option value="in">Imperial (inches)</option>
           </select>
-        </div>
-      </section>
-
-      <!-- CAD Benchmark Validation Card -->
-      <section class="card benchmark-card">
-        <div class="card-header">
-          <h3 class="card-title">✅ CAD Verification Report</h3>
-          <span style="font-size:0.75rem; color:var(--accent-emerald);">Tolerance &le; 0.1mm</span>
-        </div>
-        <div id="benchmarkReport">
-          <!-- Populated by JavaScript -->
         </div>
       </section>
     </aside>

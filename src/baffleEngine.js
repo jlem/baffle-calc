@@ -92,6 +92,7 @@ export function calculateBaffles(params) {
 
   const baffles = [];
   const rays = [];
+  const greenReflectionRays = [];
 
   // Ray 1: From focal plane bottom field spot (z_opt = F, y = -r_field)
   // to tube wall at physical tube front (z_opt = z_opt_tube_front, y = +r_tube)
@@ -149,7 +150,16 @@ export function calculateBaffles(params) {
       // Minimum Baffle Method: Ray from bottom edge of objective (-r_obj, z_opt=0)
       // through baffle tip (r_baffle, z_opt_baffle) extended to y = +r_tube
       const m_obj = (r_baffle - (-r_obj)) / z_opt_baffle;
-      z_wall_prev = (r_tube + r_obj) / m_obj;
+      const next_z_wall = (r_tube + r_obj) / m_obj;
+
+      greenReflectionRays.push({
+        baffleIndex: i + 1,
+        start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
+        baffleTip: { z_opt: z_opt_baffle, y: r_baffle, z_tube: z_tube_baffle },
+        wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
+      });
+
+      z_wall_prev = next_z_wall;
     }
   }
 
@@ -176,7 +186,8 @@ export function calculateBaffles(params) {
       r_tube
     },
     baffles,
-    rays
+    rays,
+    greenReflectionRays
   };
 }
 

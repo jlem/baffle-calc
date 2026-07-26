@@ -257,30 +257,45 @@ export class BaffleCanvasRenderer {
       ctx.fillText('Tube Front (z = 0)', xTubeFront - 45, yTopWall - 16);
     }
 
-    // Lens Cell (Shaded gradient box)
-    const lensCellWidth = Math.abs(xTubeFront - xLens) + 8;
-    const lensCellX = Math.min(xLens, xTubeFront) - 4;
-    const grad = ctx.createLinearGradient(lensCellX, 0, lensCellX + lensCellWidth, 0);
-    grad.addColorStop(0, 'rgba(56, 189, 248, 0.4)');
-    grad.addColorStop(1, 'rgba(56, 189, 248, 0.1)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(lensCellX, yTopLens - 5, lensCellWidth, (yBotLens - yTopLens) + 10);
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(lensCellX, yTopLens - 5, lensCellWidth, (yBotLens - yTopLens) + 10);
+    // --- Objective Lens (Flat Rectangle Stand-in) ---
+    // The rear surface of the objective lens is at z_opt = 0 (xLensRear)
+    const lensThickness = 15; // 15mm visual thickness for the objective lens assembly
+    const xLensRear = toX(z_opt_lens);
+    const xLensFront = toX(z_opt_lens - lensThickness);
+    const lensRectWidth = Math.abs(xLensRear - xLensFront);
 
-    // Objective Lens Clear Aperture curve
+    // Lens Cell Outer Flange (Housing connecting lens to tube wall)
+    const minCellX = Math.min(xLensFront, xTubeFront);
+    const maxCellX = Math.max(xLensRear, xTubeFront);
+    const cellWidth = maxCellX - minCellX;
+
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.08)';
+    ctx.fillRect(minCellX, yTopWall, cellWidth, yBotWall - yTopWall);
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(minCellX, yTopWall, cellWidth, yBotWall - yTopWall);
+
+    // Lens Element (Flat Glass Block with rear surface aligned at z_opt = 0)
+    ctx.fillStyle = 'rgba(0, 240, 255, 0.25)';
+    ctx.fillRect(xLensFront, yTopLens, lensRectWidth, yBotLens - yTopLens);
+
     ctx.strokeStyle = '#00f0ff';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(xLensFront, yTopLens, lensRectWidth, yBotLens - yTopLens);
+
+    // Rear surface indicator line (bold line at z_opt = 0)
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(xLens + 15, toY(0), Math.abs(yBotLens - yTopLens)/2, Math.PI * 0.7, Math.PI * 1.3);
+    ctx.moveTo(xLensRear, yTopLens);
+    ctx.lineTo(xLensRear, yBotLens);
     ctx.stroke();
 
     // Objective Lens Label
     if (this.toggles.labels) {
       ctx.fillStyle = '#00f0ff';
       ctx.font = '11px Inter, sans-serif';
-      ctx.fillText(`Lens (${params.lens_offset > 0 ? '+' : ''}${params.lens_offset}mm)`, xLens - 35, yTopLens - 16);
+      ctx.fillText(`Lens Rear (${params.lens_offset > 0 ? '+' : ''}${params.lens_offset}mm)`, xLensFront - 10, yTopLens - 16);
     }
 
     // Focal Plane line
@@ -342,6 +357,7 @@ export class BaffleCanvasRenderer {
     if (this.toggles.rays) {
       ctx.lineWidth = 1;
 
+      // Draw red/amber field spot boundary rays
       rays.forEach((ray, idx) => {
         const xStart = toX(ray.start.z_opt);
         const yStart = toY(ray.start.y);
@@ -365,6 +381,31 @@ export class BaffleCanvasRenderer {
         ctx.arc(xHit, yHit, 3.5, 0, Math.PI * 2);
         ctx.fill();
       });
+
+      // Draw Green Dotted Reflection Rays (Berfield Minimum Baffle Method)
+      if (this.baffleData.greenReflectionRays && this.baffleData.greenReflectionRays.length > 0) {
+        this.baffleData.greenReflectionRays.forEach((gray) => {
+          const xStart = toX(gray.start.z_opt);
+          const yStart = toY(gray.start.y);
+          const xWall = toX(gray.wallHit.z_opt);
+          const yWall = toY(gray.wallHit.y);
+
+          ctx.strokeStyle = '#00ff88'; // Bright green dotted ray
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([2, 4]); // Dotted pattern
+          ctx.beginPath();
+          ctx.moveTo(xStart, yStart);
+          ctx.lineTo(xWall, yWall);
+          ctx.stroke();
+
+          // Green hit point dot at tube wall
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#00ff88';
+          ctx.beginPath();
+          ctx.arc(xWall, yWall, 3, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
     }
 
     // --- 6. Baffles Layer ---
@@ -395,13 +436,16 @@ export class BaffleCanvasRenderer {
         ctx.arc(xBaffle, yBaffleBot, 2.5, 0, Math.PI * 2);
         ctx.fill();
 
-        // Baffle Number Label
+        // Baffle Label (Baffle # at top, <diameter>mm @ <distance>mm at bottom)
         if (this.toggles.labels) {
           ctx.fillStyle = '#00ff88';
           ctx.font = 'bold 11px Inter, sans-serif';
           ctx.fillText(`B${b.number}`, xBaffle - 6, yTopWall - 8);
+
           ctx.font = '10px Inter, monospace';
-          ctx.fillText(`${b.z_tube.toFixed(1)}mm`, xBaffle - 14, yBotWall + 18);
+          const labelText = `${b.aperture_diameter.toFixed(3)}mm @ ${b.z_tube.toFixed(3)}mm`;
+          const textWidth = ctx.measureText(labelText).width;
+          ctx.fillText(labelText, xBaffle - textWidth / 2, yBotWall + 18);
         }
       });
     }

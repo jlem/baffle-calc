@@ -75,8 +75,15 @@ export function exportSVG(baffleData) {
     // Bottom Vane
     svg += `  <line x1="${x}" y1="${cy + rIn}" x2="${x}" y2="${cy + rOut}" class="baffle" />\n`;
     // Label
-    svg += `  <text x="${x + 2}" y="${cy - rOut - 3}" class="text">B${b.number}: z=${b.z_tube.toFixed(2)}mm ID=${b.aperture_diameter.toFixed(2)}mm</text>\n`;
+    svg += `  <text x="${x + 2}" y="${cy - rOut - 3}" class="text">B${b.number}: ${b.aperture_diameter.toFixed(3)}mm @ ${b.z_tube.toFixed(3)}mm</text>\n`;
   });
+
+  // Green Reflection Rays (Berfield Minimum Baffle Method)
+  if (baffleData.greenReflectionRays && baffleData.greenReflectionRays.length > 0) {
+    baffleData.greenReflectionRays.forEach(gray => {
+      svg += `  <line x1="${gray.start.z_opt}" y1="${cy - gray.start.y}" x2="${gray.wallHit.z_opt}" y2="${cy - gray.wallHit.y}" stroke="#00aa55" stroke-dasharray="2,2" stroke-width="0.8" />\n`;
+    });
+  }
 
   svg += `</svg>`;
 
