@@ -326,8 +326,25 @@ tr:nth-child(even) {
   background: rgba(15, 23, 42, 0.4);
 }
 
-tr:hover {
-  background: rgba(56, 189, 248, 0.08);
+tr:hover,
+tr.active-hover-row {
+  background: rgba(56, 189, 248, 0.12) !important;
+}
+
+th:nth-child(1),
+th:nth-child(2),
+th:nth-child(3),
+td:nth-child(1),
+td:nth-child(2),
+td:nth-child(3) {
+  width: 12%;
+  min-width: 200px;
+}
+
+th:nth-child(4),
+td:nth-child(4) {
+  width: auto;
+  min-width: 200px;
 }
 
 /* Validation Modal / Benchmark Accordion */

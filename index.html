@@ -59,6 +59,18 @@
             <option value="in">Imperial (inches)</option>
           </select>
         </div>
+
+        <div class="form-group">
+          <label class="form-label" for="selectPrecision">
+            <span>Display Precision</span>
+          </label>
+          <select id="selectPrecision">
+            <option value="0">Whole Number (1 mm)</option>
+            <option value="1" selected>0.1 mm</option>
+            <option value="2">0.01 mm</option>
+            <option value="3">0.001 mm</option>
+          </select>
+        </div>
       </section>
 
       <!-- Category 2: Optical Geometry -->
@@ -186,11 +198,8 @@
             <thead>
               <tr>
                 <th>Baffle #</th>
-                <th>Distance from Tube Front (Mechanical Origin)</th>
-                <th>Distance from Objective Lens</th>
-                <th>Distance to Focal Plane</th>
-                <th>Aperture Inner Diameter (⌀)</th>
-                <th>Outer Tube ID (⌀)</th>
+                <th>Distance from Tube Front</th>
+                <th>Inner Diameter</th>
                 <th>Vane Wall Height</th>
               </tr>
             </thead>

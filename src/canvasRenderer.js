@@ -19,6 +19,11 @@ export class BaffleCanvasRenderer {
     this.baffleData = null;
     this.hoverInfo = null;
     this.renderPending = false;
+    this.precision = 1;
+    this.unit = 'mm';
+    this.highlightBaffleNumber = null;
+    this.onBaffleHoverCallback = null;
+    this.lastReportedBaffleHover = null;
     this.toggles = {
       lightCone: true,
       rays: true,
@@ -30,6 +35,23 @@ export class BaffleCanvasRenderer {
 
     this._initEvents();
     this._handleResize();
+  }
+
+  setPrecision(precision, unit = 'mm') {
+    this.precision = precision;
+    this.unit = unit;
+    this.requestRender();
+  }
+
+  setHighlightBaffle(baffleNumber) {
+    if (this.highlightBaffleNumber !== baffleNumber) {
+      this.highlightBaffleNumber = baffleNumber;
+      this.requestRender();
+    }
+  }
+
+  onBaffleHover(callback) {
+    this.onBaffleHoverCallback = callback;
   }
 
   requestRender() {
@@ -84,6 +106,12 @@ export class BaffleCanvasRenderer {
       if (this.hoverInfo !== null) {
         this.hoverInfo = null;
         this.requestRender();
+      }
+      if (this.lastReportedBaffleHover !== null) {
+        this.lastReportedBaffleHover = null;
+        if (this.onBaffleHoverCallback) {
+          this.onBaffleHoverCallback(null);
+        }
       }
     }, { passive: true });
 
@@ -158,6 +186,14 @@ export class BaffleCanvasRenderer {
       if (Math.abs(mouseX - bZScreen) < 8) {
         foundBaffle = b;
         break;
+      }
+    }
+
+    const foundBaffleNumber = foundBaffle ? foundBaffle.number : null;
+    if (this.lastReportedBaffleHover !== foundBaffleNumber) {
+      this.lastReportedBaffleHover = foundBaffleNumber;
+      if (this.onBaffleHoverCallback) {
+        this.onBaffleHoverCallback(foundBaffleNumber);
       }
     }
 
@@ -445,35 +481,41 @@ export class BaffleCanvasRenderer {
         const yBaffleTop = toY(b.aperture_radius);
         const yBaffleBot = toY(-b.aperture_radius);
 
-        // Top Baffle Vane (from wall to light cone)
-        ctx.strokeStyle = '#00ff88'; // Vibrant emerald green
-        ctx.lineWidth = 3.5;
+        const isHighlighted = (b.number === this.highlightBaffleNumber) || 
+                              (this.hoverInfo && this.hoverInfo.type === 'baffle' && this.hoverInfo.baffle.number === b.number);
+        const baffleColor = isHighlighted ? '#f59e0b' : '#00ff88'; // Orange when active/hovered
+        const strokeWidth = isHighlighted ? 5 : 3.5;
+        const dotRadius = isHighlighted ? 4 : 2.5;
+
+        // Top & Bottom Baffle Vanes
+        ctx.strokeStyle = baffleColor;
+        ctx.lineWidth = strokeWidth;
         ctx.beginPath();
         ctx.moveTo(xBaffle, yTopWall);
         ctx.lineTo(xBaffle, yBaffleTop);
-        ctx.stroke();
-
-        // Bottom Baffle Vane
-        ctx.beginPath();
         ctx.moveTo(xBaffle, yBotWall);
         ctx.lineTo(xBaffle, yBaffleBot);
         ctx.stroke();
 
-        // Baffle Tip Dot
-        ctx.fillStyle = '#00ff88';
+        // Baffle Tip Dots
+        ctx.fillStyle = baffleColor;
         ctx.beginPath();
-        ctx.arc(xBaffle, yBaffleTop, 2.5, 0, Math.PI * 2);
-        ctx.arc(xBaffle, yBaffleBot, 2.5, 0, Math.PI * 2);
+        ctx.arc(xBaffle, yBaffleTop, dotRadius, 0, Math.PI * 2);
+        ctx.arc(xBaffle, yBaffleBot, dotRadius, 0, Math.PI * 2);
         ctx.fill();
 
         // Baffle Label (Baffle # at top, <diameter>mm @ <distance>mm at bottom)
         if (this.toggles.labels) {
-          ctx.fillStyle = '#00ff88';
+          const factor = this.unit === 'in' ? 1 / 25.4 : 1;
+          const uLabel = this.unit === 'in' ? 'in' : 'mm';
+          const p = this.precision;
+
+          ctx.fillStyle = baffleColor;
           ctx.font = 'bold 11px Inter, sans-serif';
           ctx.fillText(`B${b.number}`, xBaffle - 6, yTopWall - 8);
 
           ctx.font = '10px Inter, monospace';
-          const labelText = `${b.aperture_diameter.toFixed(3)}mm @ ${b.z_tube.toFixed(3)}mm`;
+          const labelText = `${(b.aperture_diameter * factor).toFixed(p)}${uLabel} @ ${(b.z_tube * factor).toFixed(p)}${uLabel}`;
           const textWidth = ctx.measureText(labelText).width;
           ctx.fillText(labelText, xBaffle - textWidth / 2, yBotWall + 18);
         }
@@ -490,23 +532,24 @@ export class BaffleCanvasRenderer {
     const info = this.hoverInfo;
     let title = '';
     let lines = [];
+    const factor = this.unit === 'in' ? 1 / 25.4 : 1;
+    const uLabel = this.unit === 'in' ? 'in' : 'mm';
+    const p = this.precision;
 
     if (info.type === 'baffle') {
       const b = info.baffle;
       title = `Baffle #${b.number}`;
       lines = [
-        `Distance from Tube Front: ${b.z_tube.toFixed(3)} mm`,
-        `Distance from Lens: ${b.z_opt.toFixed(3)} mm`,
-        `Distance from Focal Plane: ${b.dist_from_focal_plane.toFixed(3)} mm`,
-        `Aperture Diameter: ⌀ ${b.aperture_diameter.toFixed(3)} mm`,
-        `Wall Vane Height: ${b.wall_height.toFixed(3)} mm`
+        `Distance from Tube Front: ${(b.z_tube * factor).toFixed(p)} ${uLabel}`,
+        `Inner Diameter: ⌀ ${(b.aperture_diameter * factor).toFixed(p)} ${uLabel}`,
+        `Wall Vane Height: ${(b.wall_height * factor).toFixed(p)} ${uLabel}`
       ];
     } else if (info.type === 'point') {
       title = `Coordinate Inspection`;
       lines = [
-        `Distance from Tube Front: ${info.tubeZ.toFixed(2)} mm`,
-        `Distance from Lens: ${info.optZ.toFixed(2)} mm`,
-        `Height from Optical Axis: Y = ${info.optY.toFixed(2)} mm`
+        `Distance from Tube Front: ${(info.tubeZ * factor).toFixed(p)} ${uLabel}`,
+        `Distance from Lens: ${(info.optZ * factor).toFixed(p)} ${uLabel}`,
+        `Height from Axis: Y = ${(info.optY * factor).toFixed(p)} ${uLabel}`
       ];
     }
 

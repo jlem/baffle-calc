@@ -3,23 +3,21 @@
  * Handles CSV export, SVG CAD file generation, and Canvas PNG downloads.
  */
 
-export function exportCSV(baffleData, unit = 'mm') {
+export function exportCSV(baffleData, unit = 'mm', precision = 1) {
   if (!baffleData || !baffleData.baffles) return;
 
   const unitFactor = unit === 'in' ? 1 / 25.4 : 1;
   const unitLabel = unit === 'in' ? 'in' : 'mm';
+  const p = precision;
 
-  let csvContent = `Baffle #,Distance from Tube Front (${unitLabel}),Distance from Objective Lens (${unitLabel}),Distance from Focal Plane (${unitLabel}),Aperture Inner Diameter (${unitLabel}),Outer Diameter (${unitLabel}),Vane Wall Height (${unitLabel})\n`;
+  let csvContent = `Baffle #,Distance from Tube Front (${unitLabel}),Inner Diameter (${unitLabel}),Vane Wall Height (${unitLabel})\n`;
 
   baffleData.baffles.forEach((b) => {
     csvContent += [
       b.number,
-      (b.z_tube * unitFactor).toFixed(4),
-      (b.z_opt * unitFactor).toFixed(4),
-      (b.dist_from_focal_plane * unitFactor).toFixed(4),
-      (b.aperture_diameter * unitFactor).toFixed(4),
-      (b.outer_diameter * unitFactor).toFixed(4),
-      (b.wall_height * unitFactor).toFixed(4)
+      (b.z_tube * unitFactor).toFixed(p),
+      (b.aperture_diameter * unitFactor).toFixed(p),
+      (b.wall_height * unitFactor).toFixed(p)
     ].join(',') + '\n';
   });
 
@@ -33,10 +31,11 @@ export function exportCSV(baffleData, unit = 'mm') {
   document.body.removeChild(link);
 }
 
-export function exportSVG(baffleData) {
+export function exportSVG(baffleData, precision = 1) {
   if (!baffleData) return;
   const { params, baffles, opticalBounds, lightCone } = baffleData;
   const { d_obj, d_tube, tube_length, focal_length } = params;
+  const p = precision;
 
   const width = opticalBounds.z_opt_focal_plane + 100;
   const height = d_tube * 2;
@@ -75,7 +74,7 @@ export function exportSVG(baffleData) {
     // Bottom Vane
     svg += `  <line x1="${x}" y1="${cy + rIn}" x2="${x}" y2="${cy + rOut}" class="baffle" />\n`;
     // Label
-    svg += `  <text x="${x + 2}" y="${cy - rOut - 3}" class="text">B${b.number}: ${b.aperture_diameter.toFixed(3)}mm @ ${b.z_tube.toFixed(3)}mm</text>\n`;
+    svg += `  <text x="${x + 2}" y="${cy - rOut - 3}" class="text">B${b.number}: ${b.aperture_diameter.toFixed(p)}mm @ ${b.z_tube.toFixed(p)}mm</text>\n`;
   });
 
   // Green Reflection Rays (Berfield Minimum Baffle Method)
