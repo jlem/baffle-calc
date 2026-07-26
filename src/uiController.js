@@ -3,7 +3,7 @@
  * Handles inputs, events, unit switching, table population, and CAD benchmark reports.
  */
 
-import { calculateBaffles, validateAgainstBenchmark, DEFAULT_PRESETS } from './baffleEngine.js';
+import { calculateBaffles } from './baffleEngine.js';
 import { exportCSV, exportSVG, exportPNG } from './exportManager.js';
 
 export class UIController {
@@ -11,16 +11,38 @@ export class UIController {
     this.renderer = canvasRenderer;
     this.unit = 'mm'; // 'mm' or 'in'
     this.currentBaffleData = null;
+    this.updatePending = false;
 
     this._cacheDOM();
+    this.resetToDefaults();
     this._bindEvents();
-    this._populatePresets();
     this.update();
     
     // Auto-fit view after initialization
     setTimeout(() => {
       this.renderer.fitToView();
     }, 100);
+  }
+
+  resetToDefaults() {
+    this.dom.inputDObj.value = 60;
+    this.dom.inputFocalLength.value = 1200;
+    this.dom.inputDTube.value = 67.3;
+    this.dom.inputDField.value = 25;
+    this.dom.inputLensOffset.value = -3;
+    this.dom.inputTubeLength.value = 1008;
+    this.dom.selectAlgorithm.value = 'strictZeroWall';
+    this.dom.selectUnit.value = 'mm';
+  }
+
+  requestUpdate() {
+    if (!this.updatePending) {
+      this.updatePending = true;
+      requestAnimationFrame(() => {
+        this.updatePending = false;
+        this.update();
+      });
+    }
   }
 
   _cacheDOM() {
@@ -34,7 +56,6 @@ export class UIController {
       inputTubeLength: document.getElementById('inputTubeLength'),
       selectAlgorithm: document.getElementById('selectAlgorithm'),
       selectUnit: document.getElementById('selectUnit'),
-      presetSelect: document.getElementById('presetSelect'),
 
       // Value Displays
       valDObj: document.getElementById('valDObj'),
@@ -49,6 +70,7 @@ export class UIController {
       baffleTableBody: document.querySelector('#baffleTable tbody'),
 
       // Buttons & Toggles
+      btnReset: document.getElementById('btnReset'),
       btnExportCSV: document.getElementById('btnExportCSV'),
       btnExportSVG: document.getElementById('btnExportSVG'),
       btnExportPNG: document.getElementById('btnExportPNG'),
@@ -62,19 +84,15 @@ export class UIController {
     };
   }
 
-  _populatePresets() {
-    const select = this.dom.presetSelect;
-    DEFAULT_PRESETS.forEach((preset, index) => {
-      const option = document.createElement('option');
-      option.value = index;
-      option.textContent = preset.name;
-      select.appendChild(option);
-    });
-
-    select.value = 0; // Default to CAD benchmark preset
-  }
-
   _bindEvents() {
+    if (this.dom.btnReset) {
+      this.dom.btnReset.addEventListener('click', () => {
+        this.resetToDefaults();
+        this.update();
+        this.renderer.fitToView();
+      });
+    }
+
     const inputs = [
       this.dom.inputDObj,
       this.dom.inputFocalLength,
@@ -86,20 +104,13 @@ export class UIController {
     ];
 
     inputs.forEach(input => {
-      input.addEventListener('input', () => this.update());
-      input.addEventListener('change', () => this.update());
+      input.addEventListener('input', () => this.requestUpdate());
+      input.addEventListener('change', () => this.requestUpdate());
     });
 
     this.dom.selectUnit.addEventListener('change', (e) => {
       this.unit = e.target.value;
-      this.update();
-    });
-
-    this.dom.presetSelect.addEventListener('change', (e) => {
-      const idx = e.target.value;
-      if (idx !== '') {
-        this.loadPreset(DEFAULT_PRESETS[idx]);
-      }
+      this.requestUpdate();
     });
 
     // Layer Toggles
@@ -133,18 +144,6 @@ export class UIController {
     this.dom.btnExportPNG.addEventListener('click', () => {
       exportPNG(this.renderer.canvas);
     });
-  }
-
-  loadPreset(preset) {
-    this.dom.inputDObj.value = preset.d_obj;
-    this.dom.inputFocalLength.value = preset.focal_length;
-    this.dom.inputDTube.value = preset.d_tube;
-    this.dom.inputDField.value = preset.d_field;
-    this.dom.inputLensOffset.value = preset.lens_offset;
-    this.dom.inputTubeLength.value = preset.tube_length;
-    this.dom.selectAlgorithm.value = preset.algorithm;
-    this.update();
-    this.renderer.fitToView();
   }
 
   getInputs() {

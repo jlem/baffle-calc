@@ -18,6 +18,7 @@ export class BaffleCanvasRenderer {
     // Data & Toggles
     this.baffleData = null;
     this.hoverInfo = null;
+    this.renderPending = false;
     this.toggles = {
       lightCone: true,
       rays: true,
@@ -31,14 +32,24 @@ export class BaffleCanvasRenderer {
     this._handleResize();
   }
 
+  requestRender() {
+    if (!this.renderPending) {
+      this.renderPending = true;
+      requestAnimationFrame(() => {
+        this.renderPending = false;
+        this.render();
+      });
+    }
+  }
+
   setData(baffleData) {
     this.baffleData = baffleData;
-    this.render();
+    this.requestRender();
   }
 
   setToggles(newToggles) {
     this.toggles = { ...this.toggles, ...newToggles };
-    this.render();
+    this.requestRender();
   }
 
   fitToView() {
@@ -56,34 +67,50 @@ export class BaffleCanvasRenderer {
     this.scale = Math.min(scaleX, scaleY);
     this.panX = 60 - minZ * this.scale;
     this.panY = rect.height / 2;
-    this.render();
+    this.requestRender();
   }
 
   _initEvents() {
-    window.addEventListener('resize', () => this._handleResize());
+    window.addEventListener('resize', () => this._handleResize(), { passive: true });
 
-    // Pan & Zoom mouse controls
+    // Hover is scoped ONLY to the canvas element itself
+    this.canvas.addEventListener('mousemove', (e) => {
+      if (!this.isDragging) {
+        this._handleHover(e);
+      }
+    }, { passive: true });
+
+    this.canvas.addEventListener('mouseleave', () => {
+      if (this.hoverInfo !== null) {
+        this.hoverInfo = null;
+        this.requestRender();
+      }
+    }, { passive: true });
+
+    // Dragging events (only attach window listeners during active drag)
+    const onDragMove = (e) => {
+      if (this.isDragging) {
+        this.panX = e.clientX - this.dragStart.x;
+        this.panY = e.clientY - this.dragStart.y;
+        this.requestRender();
+      }
+    };
+
+    const onDragEnd = () => {
+      if (this.isDragging) {
+        this.isDragging = false;
+        this.canvas.style.cursor = 'grab';
+        window.removeEventListener('mousemove', onDragMove);
+        window.removeEventListener('mouseup', onDragEnd);
+      }
+    };
+
     this.canvas.addEventListener('mousedown', (e) => {
       this.isDragging = true;
       this.dragStart = { x: e.clientX - this.panX, y: e.clientY - this.panY };
       this.canvas.style.cursor = 'grabbing';
-    });
-
-    window.addEventListener('mousemove', (e) => {
-      if (this.isDragging) {
-        this.panX = e.clientX - this.dragStart.x;
-        this.panY = e.clientY - this.dragStart.y;
-        this.render();
-      } else {
-        this._handleHover(e);
-      }
-    });
-
-    window.addEventListener('mouseup', () => {
-      if (this.isDragging) {
-        this.isDragging = false;
-        this.canvas.style.cursor = 'grab';
-      }
+      window.addEventListener('mousemove', onDragMove, { passive: true });
+      window.addEventListener('mouseup', onDragEnd, { passive: true });
     });
 
     this.canvas.addEventListener('wheel', (e) => {
@@ -97,7 +124,7 @@ export class BaffleCanvasRenderer {
       this.panX = mouseX - (mouseX - this.panX) * zoomFactor;
       this.panY = mouseY - (mouseY - this.panY) * zoomFactor;
       this.scale *= zoomFactor;
-      this.render();
+      this.requestRender();
     }, { passive: false });
   }
 
@@ -106,8 +133,8 @@ export class BaffleCanvasRenderer {
     const dpr = window.devicePixelRatio || 1;
     this.canvas.width = rect.width * dpr;
     this.canvas.height = rect.height * dpr;
-    this.ctx.scale(dpr, dpr);
-    this.render();
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.requestRender();
   }
 
   _handleHover(e) {
@@ -134,15 +161,16 @@ export class BaffleCanvasRenderer {
       }
     }
 
+    let newHover = null;
     if (foundBaffle) {
-      this.hoverInfo = {
+      newHover = {
         type: 'baffle',
         baffle: foundBaffle,
         screenX: mouseX,
         screenY: mouseY
       };
     } else if (optZ >= 0 && optZ <= opticalBounds.z_opt_focal_plane && Math.abs(optY) <= this.baffleData.lightCone.r_tube * 1.2) {
-      this.hoverInfo = {
+      newHover = {
         type: 'point',
         optZ,
         tubeZ,
@@ -150,11 +178,13 @@ export class BaffleCanvasRenderer {
         screenX: mouseX,
         screenY: mouseY
       };
-    } else {
-      this.hoverInfo = null;
     }
 
-    this.render();
+    // Only trigger re-render if hover state or position changed significantly
+    if (newHover !== null || this.hoverInfo !== null) {
+      this.hoverInfo = newHover;
+      this.requestRender();
+    }
   }
 
   render() {
