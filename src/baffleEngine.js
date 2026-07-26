@@ -60,7 +60,7 @@ export const DEFAULT_PRESETS = [
  * - Lens origin (z_opt = 0): Rear element / principal plane of objective lens.
  * - z_opt = z_tube - lens_offset  (if lens_offset is -3mm, z_opt = z_tube + 3mm)
  */
-export function calculateBaffles(params) {
+export function calculateBaffles(params, customBaffles = []) {
   const {
     d_obj,         // Objective clear aperture (mm)
     focal_length,  // Objective focal length F (mm)
@@ -109,11 +109,8 @@ export function calculateBaffles(params) {
 
     // Intersect ray y = r_tube + m_ray * (z_opt - z_wall_prev)
     // with top light cone y = r_obj + m_cone * z_opt
-    // r_tube - m_ray * z_wall_prev + m_ray * z_opt = r_obj + m_cone * z_opt
-    // z_opt * (m_ray - m_cone) = r_obj - r_tube + m_ray * z_wall_prev
     const z_opt_baffle = (r_obj - r_tube + m_ray * z_wall_prev) / (m_ray - m_cone);
 
-    // Stop if baffle is past physical tube back or past focal plane
     if (z_opt_baffle >= z_opt_tube_back || z_opt_baffle >= z_opt_focal_plane) {
       break;
     }
@@ -122,7 +119,6 @@ export function calculateBaffles(params) {
     const d_baffle = 2 * r_baffle;
     const z_tube_baffle = z_opt_baffle - z_opt_tube_front;
 
-    // Record Ray
     rays.push({
       baffleIndex: i + 1,
       start: { z_opt: z_opt_focal_plane, y: -r_field, z_tube: z_opt_focal_plane - z_opt_tube_front },
@@ -130,11 +126,12 @@ export function calculateBaffles(params) {
       baffleHit: { z_opt: z_opt_baffle, y: r_baffle, z_tube: z_tube_baffle }
     });
 
-    // Record Baffle
     baffles.push({
+      id: `calc_${i + 1}`,
+      isCustom: false,
       number: i + 1,
-      z_tube: z_tube_baffle,
       z_opt: z_opt_baffle,
+      z_tube: z_tube_baffle,
       dist_from_focal_plane: z_opt_focal_plane - z_opt_baffle,
       aperture_radius: r_baffle,
       aperture_diameter: d_baffle,
@@ -144,11 +141,8 @@ export function calculateBaffles(params) {
 
     // Determine next z_wall_prev based on selected algorithm
     if (algorithm === ALGORITHM_MODES.STRICT_ZERO_WALL) {
-      // Ray to previous baffle base at tube wall
       z_wall_prev = z_opt_baffle;
     } else {
-      // Minimum Baffle Method: Ray from bottom edge of objective (-r_obj, z_opt=0)
-      // through baffle tip (r_baffle, z_opt_baffle) extended to y = +r_tube
       const m_obj = (r_baffle - (-r_obj)) / z_opt_baffle;
       const next_z_wall = (r_tube + r_obj) / m_obj;
 
@@ -162,6 +156,37 @@ export function calculateBaffles(params) {
       z_wall_prev = next_z_wall;
     }
   }
+
+  // Process Custom Baffles (if any)
+  const allBaffles = [...baffles];
+  if (Array.isArray(customBaffles) && customBaffles.length > 0) {
+    customBaffles.forEach((c) => {
+      const z_tube_baffle = c.z_tube;
+      const z_opt_baffle = z_tube_baffle + z_opt_tube_front;
+      const r_baffle = getLightConeRadius(z_opt_baffle);
+      const d_baffle = 2 * r_baffle;
+
+      allBaffles.push({
+        id: c.id,
+        isCustom: true,
+        z_opt: z_opt_baffle,
+        z_tube: z_tube_baffle,
+        dist_from_focal_plane: z_opt_focal_plane - z_opt_baffle,
+        aperture_radius: r_baffle,
+        aperture_diameter: d_baffle,
+        outer_diameter: d_tube,
+        wall_height: r_tube - r_baffle
+      });
+    });
+  }
+
+  // Sort all baffles by distance from tube front (z_tube) ascending
+  allBaffles.sort((a, b) => a.z_tube - b.z_tube);
+
+  // Re-number sequentially
+  allBaffles.forEach((b, idx) => {
+    b.number = idx + 1;
+  });
 
   return {
     params: {
@@ -185,7 +210,7 @@ export function calculateBaffles(params) {
       r_field,
       r_tube
     },
-    baffles,
+    baffles: allBaffles,
     rays,
     greenReflectionRays
   };

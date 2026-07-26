@@ -331,6 +331,10 @@ tr.active-hover-row {
   background: rgba(56, 189, 248, 0.12) !important;
 }
 
+tr.custom-baffle-row {
+  background: rgba(168, 85, 247, 0.08);
+}
+
 th:nth-child(1),
 th:nth-child(2),
 th:nth-child(3),

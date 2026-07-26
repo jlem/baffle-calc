@@ -11,6 +11,8 @@ export class UIController {
     this.renderer = canvasRenderer;
     this.unit = 'mm'; // 'mm' or 'in'
     this.precision = 1; // Default to 0.1mm (1 decimal place)
+    this.customBaffles = []; // Custom user baffles: [{ id, z_tube }]
+    this.editingBaffleId = null;
     this.currentBaffleData = null;
     this.updatePending = false;
 
@@ -37,6 +39,8 @@ export class UIController {
     if (this.dom.selectPrecision) this.dom.selectPrecision.value = '1';
     this.unit = 'mm';
     this.precision = 1;
+    this.customBaffles = [];
+    this.editingBaffleId = null;
   }
 
   requestUpdate() {
@@ -188,7 +192,7 @@ export class UIController {
 
   update() {
     const params = this.getInputs();
-    this.currentBaffleData = calculateBaffles(params);
+    this.currentBaffleData = calculateBaffles(params, this.customBaffles);
 
     // Update value displays
     const uLabel = this.unit === 'in' ? 'in' : 'mm';
@@ -215,7 +219,9 @@ export class UIController {
     tbody.innerHTML = '';
 
     const baffles = this.currentBaffleData.baffles;
-    this.dom.baffleCountBadge.textContent = `${baffles.length} Baffles Calculated`;
+    const calcCount = baffles.filter(b => !b.isCustom).length;
+    const customCount = baffles.filter(b => b.isCustom).length;
+    this.dom.baffleCountBadge.textContent = `${baffles.length} Total (${calcCount} Auto, ${customCount} Custom)`;
 
     const factor = this.unit === 'in' ? 1 / 25.4 : 1;
     const uLabel = this.unit === 'in' ? 'in' : 'mm';
@@ -224,6 +230,7 @@ export class UIController {
     baffles.forEach(b => {
       const tr = document.createElement('tr');
       tr.dataset.baffleNumber = b.number;
+      if (b.isCustom) tr.classList.add('custom-baffle-row');
 
       tr.addEventListener('mouseenter', () => {
         this.renderer.setHighlightBaffle(b.number);
@@ -235,13 +242,169 @@ export class UIController {
         tr.classList.remove('active-hover-row');
       });
 
-      tr.innerHTML = `
-        <td style="font-weight:bold; color:var(--accent-emerald);">Baffle #${b.number}</td>
-        <td style="font-weight:bold; color:var(--primary-cyan);">${(b.z_tube * factor).toFixed(p)} ${uLabel}</td>
-        <td style="font-weight:bold; color:var(--accent-amber);">⌀ ${(b.aperture_diameter * factor).toFixed(p)} ${uLabel}</td>
-        <td>${(b.wall_height * factor).toFixed(p)} ${uLabel}</td>
-      `;
+      if (b.isCustom && this.editingBaffleId === b.id) {
+        // --- IN-LINE EDIT MODE ---
+        tr.innerHTML = `
+          <td>
+            <span style="font-weight:bold; color:#c084fc;">Baffle #${b.number}</span>
+            <span style="font-size:0.65rem; background:rgba(168,85,247,0.3); color:#e9d5ff; padding:1px 5px; border-radius:3px; margin-left:4px; border:1px solid #c084fc;">Editing</span>
+          </td>
+          <td>
+            <div style="display:flex; align-items:center; gap:4px;">
+              <input type="number" id="input_edit_${b.id}" value="${(b.z_tube * factor).toFixed(p)}" step="0.1" style="width:90px; padding:3px 6px; font-size:0.85rem; background:rgba(15,23,42,0.9); border:1px solid #c084fc; border-radius:4px; color:#fff;">
+              <span style="font-size:0.8rem; color:var(--text-muted);">${uLabel}</span>
+            </div>
+          </td>
+          <td style="color:var(--text-muted); font-size:0.82rem;">⌀ ${(b.aperture_diameter * factor).toFixed(p)} ${uLabel}</td>
+          <td>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-muted); font-size:0.82rem;">${(b.wall_height * factor).toFixed(p)} ${uLabel}</span>
+              <div style="display:flex; gap:6px;">
+                <button class="btn-save-custom" data-id="${b.id}" style="padding:3px 8px; font-size:0.75rem; background:#10b981; color:#000; font-weight:700; border:none; border-radius:4px; cursor:pointer;">Save</button>
+                <button class="btn-cancel-custom" style="padding:3px 8px; font-size:0.75rem; background:rgba(255,255,255,0.15); color:#fff; border:none; border-radius:4px; cursor:pointer;">Cancel</button>
+              </div>
+            </div>
+          </td>
+        `;
+
+        setTimeout(() => {
+          const editInput = tr.querySelector(`#input_edit_${b.id}`);
+          const btnSave = tr.querySelector('.btn-save-custom');
+          const btnCancel = tr.querySelector('.btn-cancel-custom');
+
+          const handleSave = () => {
+            if (editInput) {
+              let newZDisplay = parseFloat(editInput.value);
+              if (!isNaN(newZDisplay)) {
+                let newZ_mm = this.unit === 'in' ? newZDisplay * 25.4 : newZDisplay;
+                const target = this.customBaffles.find(cb => cb.id === b.id);
+                if (target) target.z_tube = newZ_mm;
+              }
+            }
+            this.editingBaffleId = null;
+            this.update();
+          };
+
+          if (btnSave) btnSave.addEventListener('click', handleSave);
+          if (btnCancel) btnCancel.addEventListener('click', () => {
+            this.editingBaffleId = null;
+            this.update();
+          });
+          if (editInput) {
+            editInput.addEventListener('keydown', (e) => {
+              if (e.key === 'Enter') handleSave();
+              if (e.key === 'Escape') {
+                this.editingBaffleId = null;
+                this.update();
+              }
+            });
+            editInput.focus();
+            editInput.select();
+          }
+        }, 0);
+
+      } else if (b.isCustom) {
+        // --- DISPLAY MODE FOR CUSTOM BAFFLE ---
+        tr.innerHTML = `
+          <td>
+            <span style="font-weight:bold; color:#c084fc;">Baffle #${b.number}</span>
+            <span style="font-size:0.65rem; background:rgba(168,85,247,0.2); color:#c084fc; padding:1px 5px; border-radius:3px; margin-left:4px; border:1px solid rgba(168,85,247,0.4);">Custom</span>
+          </td>
+          <td style="font-weight:bold; color:var(--primary-cyan);">${(b.z_tube * factor).toFixed(p)} ${uLabel}</td>
+          <td style="font-weight:bold; color:var(--accent-amber);">⌀ ${(b.aperture_diameter * factor).toFixed(p)} ${uLabel}</td>
+          <td>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span>${(b.wall_height * factor).toFixed(p)} ${uLabel}</span>
+              <div style="display:flex; gap:4px;">
+                <button class="btn-edit-custom" data-id="${b.id}" title="Edit Custom Baffle" style="background:none; border:none; color:#c084fc; cursor:pointer; font-size:0.85rem; padding:2px 4px;">✏️</button>
+                <button class="btn-delete-custom" data-id="${b.id}" title="Delete Custom Baffle" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:0.85rem; padding:2px 4px;">🗑️</button>
+              </div>
+            </div>
+          </td>
+        `;
+
+        setTimeout(() => {
+          const btnEdit = tr.querySelector('.btn-edit-custom');
+          const btnDelete = tr.querySelector('.btn-delete-custom');
+          if (btnEdit) {
+            btnEdit.addEventListener('click', (e) => {
+              e.stopPropagation();
+              this.editingBaffleId = b.id;
+              this.update();
+            });
+          }
+          if (btnDelete) {
+            btnDelete.addEventListener('click', (e) => {
+              e.stopPropagation();
+              this.customBaffles = this.customBaffles.filter(cb => cb.id !== b.id);
+              if (this.editingBaffleId === b.id) this.editingBaffleId = null;
+              this.update();
+            });
+          }
+        }, 0);
+
+      } else {
+        // --- NORMAL CALCULATED BAFFLE ---
+        tr.innerHTML = `
+          <td style="font-weight:bold; color:var(--accent-emerald);">Baffle #${b.number}</td>
+          <td style="font-weight:bold; color:var(--primary-cyan);">${(b.z_tube * factor).toFixed(p)} ${uLabel}</td>
+          <td style="font-weight:bold; color:var(--accent-amber);">⌀ ${(b.aperture_diameter * factor).toFixed(p)} ${uLabel}</td>
+          <td>${(b.wall_height * factor).toFixed(p)} ${uLabel}</td>
+        `;
+      }
+
       tbody.appendChild(tr);
     });
+
+    // --- ALWAYS APPEND PLACEHOLDER ROW AT THE BOTTOM ---
+    const placeholderTr = document.createElement('tr');
+    placeholderTr.className = 'placeholder-row';
+    placeholderTr.style.background = 'rgba(168, 85, 247, 0.05)';
+    placeholderTr.style.borderTop = '1px dashed rgba(168, 85, 247, 0.3)';
+
+    placeholderTr.innerHTML = `
+      <td>
+        <span style="font-weight:bold; color:#c084fc; font-size:0.82rem;">+ Custom</span>
+      </td>
+      <td>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <input type="number" id="inputAddCustomZ" placeholder="Distance..." step="0.1" min="0" style="width:100px; padding:3px 6px; font-size:0.82rem; background:rgba(15,23,42,0.8); border:1px dashed #c084fc; border-radius:4px; color:#fff;">
+          <span style="font-size:0.8rem; color:var(--text-muted);">${uLabel}</span>
+        </div>
+      </td>
+      <td style="color:var(--text-muted); font-size:0.78rem; font-style:italic;">Auto-calculated</td>
+      <td>
+        <div style="display:flex; justify-content:flex-end;">
+          <button id="btnAddCustomBaffle" class="btn" style="padding:3px 10px; font-size:0.78rem; background:rgba(168, 85, 247, 0.25); border:1px solid #c084fc; color:#e9d5ff; font-weight:600; cursor:pointer;">+ Add Baffle</button>
+        </div>
+      </td>
+    `;
+
+    tbody.appendChild(placeholderTr);
+
+    // Bind Add Event
+    const inputAdd = placeholderTr.querySelector('#inputAddCustomZ');
+    const btnAdd = placeholderTr.querySelector('#btnAddCustomBaffle');
+
+    const handleAdd = () => {
+      if (!inputAdd) return;
+      let valDisplay = parseFloat(inputAdd.value);
+      if (!isNaN(valDisplay) && valDisplay >= 0) {
+        let val_mm = this.unit === 'in' ? valDisplay * 25.4 : valDisplay;
+        this.customBaffles.push({
+          id: `custom_${Date.now()}`,
+          z_tube: val_mm
+        });
+        inputAdd.value = '';
+        this.update();
+      }
+    };
+
+    if (btnAdd) btnAdd.addEventListener('click', handleAdd);
+    if (inputAdd) {
+      inputAdd.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') handleAdd();
+      });
+    }
   }
 }

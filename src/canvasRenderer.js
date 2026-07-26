@@ -483,7 +483,8 @@ export class BaffleCanvasRenderer {
 
         const isHighlighted = (b.number === this.highlightBaffleNumber) || 
                               (this.hoverInfo && this.hoverInfo.type === 'baffle' && this.hoverInfo.baffle.number === b.number);
-        const baffleColor = isHighlighted ? '#f59e0b' : '#00ff88'; // Orange when active/hovered
+        const baseColor = b.isCustom ? '#c084fc' : '#00ff88'; // Purple for custom, Emerald green for auto
+        const baffleColor = isHighlighted ? '#f59e0b' : baseColor; // Orange when active/hovered
         const strokeWidth = isHighlighted ? 5 : 3.5;
         const dotRadius = isHighlighted ? 4 : 2.5;
 
@@ -504,20 +505,29 @@ export class BaffleCanvasRenderer {
         ctx.arc(xBaffle, yBaffleBot, dotRadius, 0, Math.PI * 2);
         ctx.fill();
 
-        // Baffle Label (Baffle # at top, <diameter>mm @ <distance>mm at bottom)
+        // Baffle Label (Baffle # at top, 2-line centered diameter and @ distance at bottom)
         if (this.toggles.labels) {
           const factor = this.unit === 'in' ? 1 / 25.4 : 1;
           const uLabel = this.unit === 'in' ? 'in' : 'mm';
           const p = this.precision;
 
           ctx.fillStyle = baffleColor;
-          ctx.font = 'bold 11px Inter, sans-serif';
-          ctx.fillText(`B${b.number}`, xBaffle - 6, yTopWall - 8);
+          ctx.textAlign = 'center';
 
+          // Top Badge
+          ctx.font = 'bold 11px Inter, sans-serif';
+          ctx.fillText(`B${b.number}`, xBaffle, yTopWall - 8);
+
+          // Bottom 2-Line Label
           ctx.font = '10px Inter, monospace';
-          const labelText = `${(b.aperture_diameter * factor).toFixed(p)}${uLabel} @ ${(b.z_tube * factor).toFixed(p)}${uLabel}`;
-          const textWidth = ctx.measureText(labelText).width;
-          ctx.fillText(labelText, xBaffle - textWidth / 2, yBotWall + 18);
+          const diameterText = `${(b.aperture_diameter * factor).toFixed(p)}${uLabel}`;
+          const distanceText = `@ ${(b.z_tube * factor).toFixed(p)}${uLabel}`;
+
+          ctx.fillText(diameterText, xBaffle, yBotWall + 16);
+          ctx.fillText(distanceText, xBaffle, yBotWall + 28);
+
+          // Reset text align for subsequent rendering
+          ctx.textAlign = 'left';
         }
       });
     }
