@@ -65,7 +65,8 @@ export function calculateBaffles(params, customBaffles = []) {
     d_obj,         // Objective clear aperture (mm)
     focal_length,  // Objective focal length F (mm)
     d_tube,        // Inner tube diameter (mm)
-    d_field,       // Target illuminated field diameter (mm)
+    d_field: input_d_field, // Target illuminated field diameter (mm) in 'specify' mode
+    fieldMode = 'specify',  // 'specify' or 'fromBaffles'
     lens_offset = 0,// Lens position relative to tube front (mm). Lens left of tube front = negative
     tube_length,   // Physical tube length (mm)
     algorithm = ALGORITHM_MODES.STRICT_ZERO_WALL,
@@ -74,7 +75,6 @@ export function calculateBaffles(params, customBaffles = []) {
 
   const r_obj = d_obj / 2;
   const r_tube = d_tube / 2;
-  const r_field = d_field / 2;
 
   // Optical positions
   // z_opt = 0 is lens rear surface
@@ -83,16 +83,198 @@ export function calculateBaffles(params, customBaffles = []) {
   const z_opt_tube_back = z_opt_tube_front + tube_length;
   const z_opt_focal_plane = focal_length; // z_opt = F
 
-  // Light cone slope: r_cone(z_opt) = r_obj + m_cone * z_opt
-  // At z_opt = 0: r = r_obj
-  // At z_opt = F: r = r_field
-  const m_cone = (r_field - r_obj) / focal_length;
-
-  const getLightConeRadius = (z_opt) => r_obj + m_cone * z_opt;
-
   const baffles = [];
   const rays = [];
   const greenReflectionRays = [];
+
+  if (fieldMode === 'fromBaffles') {
+    // --- FROM BAFFLES MODE ---
+    // Clear auto-generated baffles; compute fully illuminated field from manual baffles + objective
+    if (!Array.isArray(customBaffles) || customBaffles.length === 0) {
+      return {
+        params: {
+          d_obj,
+          focal_length,
+          d_tube,
+          d_field: null,
+          fieldMode,
+          lens_offset,
+          tube_length,
+          algorithm
+        },
+        opticalBounds: {
+          z_opt_lens: 0,
+          z_opt_tube_front,
+          z_opt_tube_back,
+          z_opt_focal_plane
+        },
+        lightCone: {
+          m_cone: 0,
+          r_obj,
+          r_field: 0,
+          r_tube,
+          hasLightCone: false
+        },
+        baffles: [],
+        rays: [],
+        greenReflectionRays: [],
+        visibleWallSections: []
+      };
+    }
+
+    // Compute candidate illuminated field diameter for each manual baffle
+    const baffleEvaluations = customBaffles.map((c) => {
+      const z_tube_baffle = c.z_tube;
+      const z_opt_baffle = z_tube_baffle + z_opt_tube_front;
+      const z_opt_safe = Math.max(0.001, z_opt_baffle);
+      const isAutoDia = Boolean(c.autoDiameter);
+      const d_baffle = (c.aperture_diameter !== undefined && c.aperture_diameter !== null && !isNaN(c.aperture_diameter))
+        ? c.aperture_diameter
+        : d_obj;
+      // Line from (0, d_obj) through (z_opt_baffle, d_baffle) evaluated at z_opt = focal_length
+      const d_field_candidate = d_obj + (focal_length / z_opt_safe) * (d_baffle - d_obj);
+      const min_axial_diameter = Math.max(0, d_obj * (1 - z_opt_baffle / focal_length));
+      const isClipping = !isAutoDia && d_field_candidate <= 0;
+      return {
+        c,
+        isAutoDia,
+        z_tube_baffle,
+        z_opt_baffle,
+        d_baffle,
+        d_field_candidate,
+        min_axial_diameter,
+        isClipping
+      };
+    });
+
+    const definingEvaluations = baffleEvaluations.filter(e => !e.isAutoDia);
+    const hasClippingBaffle = definingEvaluations.some(e => e.isClipping);
+    let minCandidateField = 0;
+    if (definingEvaluations.length > 0) {
+      minCandidateField = Math.min(...definingEvaluations.map(e => e.d_field_candidate));
+    } else if (params.fallback_d_field !== undefined && params.fallback_d_field !== null && params.fallback_d_field > 0) {
+      minCandidateField = params.fallback_d_field;
+    } else {
+      minCandidateField = Math.min(...baffleEvaluations.map(e => e.d_field_candidate));
+    }
+
+    const hasLightCone = !hasClippingBaffle && minCandidateField > 0;
+    const computed_d_field = hasLightCone ? minCandidateField : null;
+    const r_field = hasLightCone ? computed_d_field / 2 : 0;
+    const m_cone = hasLightCone ? (r_field - r_obj) / focal_length : 0;
+    const getLightConeRadius = (z_opt) => r_obj + m_cone * z_opt;
+
+    const allBaffles = baffleEvaluations.map((ev) => {
+      const { c, isAutoDia, z_tube_baffle, z_opt_baffle, min_axial_diameter, isClipping } = ev;
+      const r_cone = hasLightCone ? getLightConeRadius(z_opt_baffle) : 0;
+      const d_cone = hasLightCone ? Math.max(0, 2 * r_cone) : min_axial_diameter;
+      const d_baffle = (isAutoDia && hasLightCone)
+        ? Math.max(0.1, Math.min(d_tube, d_cone))
+        : ev.d_baffle;
+      if (isAutoDia && hasLightCone) {
+        c.aperture_diameter = d_baffle;
+      }
+      const r_baffle = d_baffle / 2;
+
+      return {
+        id: c.id,
+        isCustom: true,
+        autoDiameter: isAutoDia,
+        isClipping,
+        min_axial_diameter,
+        expected_cone_diameter: d_cone,
+        z_opt: z_opt_baffle,
+        z_tube: z_tube_baffle,
+        dist_from_focal_plane: z_opt_focal_plane - z_opt_baffle,
+        aperture_radius: r_baffle,
+        aperture_diameter: d_baffle,
+        outer_diameter: d_tube,
+        wall_height: r_tube - r_baffle
+      };
+    });
+
+    // Sort by distance from tube front ascending and re-number sequentially
+    allBaffles.sort((a, b) => a.z_tube - b.z_tube);
+    const wallEndForRays = Math.min(z_opt_tube_back, z_opt_focal_plane);
+    const validForRays = allBaffles.filter((b) => (
+      b.z_opt >= z_opt_tube_front && b.z_opt <= wallEndForRays && b.aperture_radius < r_tube
+    ));
+    const lastValidBaffle = validForRays.length > 0 ? validForRays[validForRays.length - 1] : null;
+
+    allBaffles.forEach((b, idx) => {
+      b.number = idx + 1;
+
+      if (hasLightCone) {
+        // Compute ray from bottom of computed illuminated field through baffle top tip to tube wall
+        if (b.z_opt < z_opt_focal_plane && (b.aperture_radius + r_field) > 0) {
+          const m_ray = (b.aperture_radius - (-r_field)) / (b.z_opt - z_opt_focal_plane);
+          const z_wall = z_opt_focal_plane + (r_tube - (-r_field)) / m_ray;
+          rays.push({
+            baffleIndex: b.number,
+            start: { z_opt: z_opt_focal_plane, y: -r_field, z_tube: z_opt_focal_plane - z_opt_tube_front },
+            wallHit: { z_opt: z_wall, y: r_tube, z_tube: z_wall - z_opt_tube_front },
+            baffleHit: { z_opt: b.z_opt, y: b.aperture_radius, z_tube: b.z_tube }
+          });
+        }
+
+        if ((algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE || b === lastValidBaffle) && b.z_opt > 0 && (b.aperture_radius + r_obj) > 0) {
+          const m_obj = (b.aperture_radius - (-r_obj)) / b.z_opt;
+          const next_z_wall = (r_tube + r_obj) / m_obj;
+          greenReflectionRays.push({
+            baffleIndex: b.number,
+            start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
+            baffleTip: { z_opt: b.z_opt, y: b.aperture_radius, z_tube: b.z_tube },
+            wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
+          });
+        }
+      }
+    });
+
+    const opticalBounds = {
+      z_opt_lens: 0,
+      z_opt_tube_front,
+      z_opt_tube_back,
+      z_opt_focal_plane
+    };
+
+    const lightCone = {
+      m_cone,
+      r_obj,
+      r_field,
+      r_tube,
+      hasLightCone
+    };
+
+    const visibleWallSections = computeVisibleWallSections(opticalBounds, lightCone, allBaffles, algorithm);
+
+    return {
+      params: {
+        d_obj,
+        focal_length,
+        d_tube,
+        d_field: computed_d_field,
+        isClippedField: hasClippingBaffle,
+        fieldMode,
+        lens_offset,
+        tube_length,
+        algorithm
+      },
+      opticalBounds,
+      lightCone,
+      baffles: allBaffles,
+      rays,
+      greenReflectionRays,
+      visibleWallSections
+    };
+  }
+
+  // --- SPECIFY MODE (Default) ---
+  const d_field = input_d_field;
+  const r_field = d_field / 2;
+
+  // Light cone slope: r_cone(z_opt) = r_obj + m_cone * z_opt
+  const m_cone = (r_field - r_obj) / focal_length;
+  const getLightConeRadius = (z_opt) => r_obj + m_cone * z_opt;
 
   // Ray 1: From focal plane bottom field spot (z_opt = F, y = -r_field)
   // to tube wall at physical tube front (z_opt = z_opt_tube_front, y = +r_tube)
@@ -129,6 +311,7 @@ export function calculateBaffles(params, customBaffles = []) {
     baffles.push({
       id: `calc_${i + 1}`,
       isCustom: false,
+      isClipping: false,
       number: i + 1,
       z_opt: z_opt_baffle,
       z_tube: z_tube_baffle,
@@ -158,17 +341,34 @@ export function calculateBaffles(params, customBaffles = []) {
   }
 
   // Process Custom Baffles (if any)
+  let hasClippingCustomBaffle = false;
   const allBaffles = [...baffles];
   if (Array.isArray(customBaffles) && customBaffles.length > 0) {
     customBaffles.forEach((c) => {
       const z_tube_baffle = c.z_tube;
       const z_opt_baffle = z_tube_baffle + z_opt_tube_front;
-      const r_baffle = getLightConeRadius(z_opt_baffle);
-      const d_baffle = 2 * r_baffle;
+      const z_opt_safe = Math.max(0.001, z_opt_baffle);
+      const r_cone = getLightConeRadius(z_opt_baffle);
+      const d_cone = Math.max(0.1, Math.min(d_tube, 2 * r_cone));
+      const min_axial_diameter = Math.max(0, d_obj * (1 - z_opt_baffle / focal_length));
+      const hasCustomDia = c.aperture_diameter !== undefined && c.aperture_diameter !== null && !isNaN(c.aperture_diameter);
+      const isAutoDia = Boolean(c.autoDiameter) || !hasCustomDia;
+      const d_baffle = isAutoDia ? d_cone : c.aperture_diameter;
+      if (isAutoDia) {
+        c.aperture_diameter = d_baffle;
+      }
+      const r_baffle = d_baffle / 2;
+      const d_field_candidate = d_obj + (focal_length / z_opt_safe) * (d_baffle - d_obj);
+      const isClipping = !isAutoDia && d_field_candidate <= 0;
+      if (isClipping) hasClippingCustomBaffle = true;
 
       allBaffles.push({
         id: c.id,
         isCustom: true,
+        autoDiameter: isAutoDia,
+        isClipping,
+        min_axial_diameter,
+        expected_cone_diameter: d_cone,
         z_opt: z_opt_baffle,
         z_tube: z_tube_baffle,
         dist_from_focal_plane: z_opt_focal_plane - z_opt_baffle,
@@ -188,32 +388,146 @@ export function calculateBaffles(params, customBaffles = []) {
     b.number = idx + 1;
   });
 
+  // In Strict mode, add the objective visibility ray for the last valid baffle in the tube
+  if (algorithm === ALGORITHM_MODES.STRICT_ZERO_WALL && !hasClippingCustomBaffle) {
+    const wallEndForRays = Math.min(z_opt_tube_back, z_opt_focal_plane);
+    const validForRays = allBaffles.filter((b) => (
+      b.z_opt >= z_opt_tube_front && b.z_opt <= wallEndForRays && b.aperture_radius < r_tube
+    ));
+    const lastValidBaffle = validForRays.length > 0 ? validForRays[validForRays.length - 1] : null;
+    if (lastValidBaffle && lastValidBaffle.z_opt > 0 && (lastValidBaffle.aperture_radius + r_obj) > 0) {
+      const m_obj = (lastValidBaffle.aperture_radius - (-r_obj)) / lastValidBaffle.z_opt;
+      const next_z_wall = (r_tube + r_obj) / m_obj;
+      greenReflectionRays.push({
+        baffleIndex: lastValidBaffle.number,
+        start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
+        baffleTip: { z_opt: lastValidBaffle.z_opt, y: lastValidBaffle.aperture_radius, z_tube: lastValidBaffle.z_tube },
+        wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
+      });
+    }
+  }
+
+  const opticalBounds = {
+    z_opt_lens: 0,
+    z_opt_tube_front,
+    z_opt_tube_back,
+    z_opt_focal_plane
+  };
+
+  const lightCone = {
+    m_cone,
+    r_obj,
+    r_field,
+    r_tube,
+    hasLightCone: !hasClippingCustomBaffle
+  };
+
+  const visibleWallSections = computeVisibleWallSections(opticalBounds, lightCone, allBaffles, algorithm);
+
   return {
     params: {
       d_obj,
       focal_length,
       d_tube,
       d_field,
+      isClippedField: hasClippingCustomBaffle,
+      fieldMode,
       lens_offset,
       tube_length,
       algorithm
     },
-    opticalBounds: {
-      z_opt_lens: 0,
-      z_opt_tube_front,
-      z_opt_tube_back,
-      z_opt_focal_plane
-    },
-    lightCone: {
-      m_cone,
-      r_obj,
-      r_field,
-      r_tube
-    },
+    opticalBounds,
+    lightCone,
     baffles: allBaffles,
-    rays,
-    greenReflectionRays
+    rays: hasClippingCustomBaffle ? [] : rays,
+    greenReflectionRays: hasClippingCustomBaffle ? [] : greenReflectionRays,
+    visibleWallSections
   };
+}
+
+/**
+ * Computes sections of the physical tube wall that are visible from the fully illuminated field
+ * according to the selected strategy ('strictZeroWall' or 'minimumBaffle').
+ */
+function computeVisibleWallSections(opticalBounds, lightCone, baffles, algorithm) {
+  if (!lightCone.hasLightCone) return [];
+
+  const { z_opt_tube_front, z_opt_tube_back, z_opt_focal_plane } = opticalBounds;
+  const { r_obj, r_field, r_tube } = lightCone;
+
+  const wallStart = z_opt_tube_front;
+  const wallEnd = Math.min(z_opt_tube_back, z_opt_focal_plane);
+  if (wallEnd <= wallStart) return [];
+
+  const validBaffles = baffles.filter((b) => (
+    b.z_opt >= wallStart && b.z_opt <= wallEnd && b.aperture_radius < r_tube
+  ));
+  const lastBaffle = validBaffles.length > 0 ? validBaffles[validBaffles.length - 1] : null;
+
+  const protectedIntervals = [];
+
+  validBaffles.forEach((b) => {
+    const z_k = b.z_opt;
+    const r_k = b.aperture_radius;
+
+    // 1. Interval in front of baffle k hidden from the illuminated field (z_opt = F, y = -r_field)
+    if (z_k < z_opt_focal_plane && (r_k + r_field) > 0) {
+      const z_shadow_front = z_opt_focal_plane - ((r_tube + r_field) / (r_k + r_field)) * (z_opt_focal_plane - z_k);
+      const start = Math.max(wallStart, z_shadow_front);
+      const end = Math.min(wallEnd, z_k);
+      if (end > start) {
+        protectedIntervals.push([start, end]);
+      }
+    }
+
+    // 2. Interval behind baffle k shaded from direct objective light (z_opt = 0, y = -r_obj):
+    //    Applied to all baffles in Minimum Baffle mode, and only to the last baffle in Strict mode.
+    if ((algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE || b === lastBaffle) && z_k > 0 && (r_k + r_obj) > 0) {
+      const z_shade_end = ((r_tube + r_obj) / (r_k + r_obj)) * z_k;
+      const start = Math.max(wallStart, z_k);
+      const end = Math.min(wallEnd, z_shade_end);
+      if (end > start) {
+        protectedIntervals.push([start, end]);
+      }
+    }
+  });
+
+  // Sort and merge overlapping/adjacent protected intervals (1.5mm tolerance for 0.1mm input rounding)
+  const MERGE_TOL = 1.5;
+  protectedIntervals.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const interval of protectedIntervals) {
+    if (merged.length === 0) {
+      merged.push([...interval]);
+    } else {
+      const last = merged[merged.length - 1];
+      if (interval[0] <= last[1] + MERGE_TOL) {
+        last[1] = Math.max(last[1], interval[1]);
+      } else {
+        merged.push([...interval]);
+      }
+    }
+  }
+
+  // Find uncovered intervals in [wallStart, wallEnd]
+  const rawUncovered = [];
+  let cursor = wallStart;
+  for (const [start, end] of merged) {
+    if (start > cursor + MERGE_TOL) {
+      rawUncovered.push([cursor, start]);
+    }
+    cursor = Math.max(cursor, end);
+  }
+  if (wallEnd > cursor + MERGE_TOL) {
+    rawUncovered.push([cursor, wallEnd]);
+  }
+
+  return rawUncovered.map(([s, e]) => ({
+    z_opt_start: s,
+    z_opt_end: e,
+    z_tube_start: s - z_opt_tube_front,
+    z_tube_end: e - z_opt_tube_front
+  }));
 }
 
 /**
