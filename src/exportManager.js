@@ -59,7 +59,7 @@ export function exportSVG(baffleData, precision = 1) {
   <rect x="${xTubeFront}" y="${cy - d_tube/2}" width="${tube_length}" height="${d_tube}" class="tube" />
 
   <!-- Light Cone -->
-  <polygon points="0,${cy - d_obj/2} ${focal_length},${cy - params.d_field/2} ${focal_length},${cy + params.d_field/2} 0,${cy + d_obj/2}" class="lightcone" />
+  ${params.d_field !== null ? `<polygon points="0,${cy - d_obj/2} ${focal_length},${cy - params.d_field/2} ${focal_length},${cy + params.d_field/2} 0,${cy + d_obj/2}" class="lightcone" />` : ''}
 
   <!-- Baffles -->
 `;
