@@ -65,13 +65,28 @@ export function calculateBaffles(params, customBaffles = []) {
     d_obj,         // Objective clear aperture (mm)
     focal_length,  // Objective focal length F (mm)
     d_tube,        // Inner tube diameter (mm)
-    d_field: input_d_field, // Target illuminated field diameter (mm) in 'specify' mode
-    fieldMode = 'specify',  // 'specify' or 'fromBaffles'
+    d_field: input_d_field, // Target illuminated field diameter (mm) when fieldMode is 'specified'
+    placementMode: rawPlacementMode, // 'automatic' or 'manual'
+    fieldMode: rawFieldMode = 'specified', // 'computed' or 'specified' (legacy: 'fromBaffles' or 'specify')
     lens_offset = 0,// Lens position relative to tube front (mm). Lens left of tube front = negative
     tube_length,   // Physical tube length (mm)
     algorithm = ALGORITHM_MODES.STRICT_ZERO_WALL,
     max_baffles = 25
   } = params;
+
+  // Normalize placementMode ('automatic' | 'manual') and fieldMode ('computed' | 'specified')
+  // while preserving backward compatibility with legacy callers passing fieldMode: 'specify' | 'fromBaffles'
+  let placementMode = rawPlacementMode;
+  if (placementMode !== 'automatic' && placementMode !== 'manual') {
+    placementMode = (rawFieldMode === 'fromBaffles' || rawFieldMode === 'computed') ? 'manual' : 'automatic';
+  }
+
+  let fieldMode;
+  if (placementMode === 'automatic') {
+    fieldMode = 'specified';
+  } else {
+    fieldMode = (rawFieldMode === 'specify' || rawFieldMode === 'specified') ? 'specified' : 'computed';
+  }
 
   const r_obj = d_obj / 2;
   const r_tube = d_tube / 2;
@@ -87,8 +102,8 @@ export function calculateBaffles(params, customBaffles = []) {
   const rays = [];
   const greenReflectionRays = [];
 
-  if (fieldMode === 'fromBaffles') {
-    // --- FROM BAFFLES MODE ---
+  if (placementMode === 'manual' && fieldMode === 'computed') {
+    // --- MANUAL PLACEMENT + COMPUTED FIELD MODE ---
     // Clear auto-generated baffles; compute fully illuminated field from manual baffles + objective
     if (!Array.isArray(customBaffles) || customBaffles.length === 0) {
       return {
@@ -97,6 +112,7 @@ export function calculateBaffles(params, customBaffles = []) {
           focal_length,
           d_tube,
           d_field: null,
+          placementMode,
           fieldMode,
           lens_offset,
           tube_length,
@@ -254,6 +270,7 @@ export function calculateBaffles(params, customBaffles = []) {
         d_tube,
         d_field: computed_d_field,
         isClippedField: hasClippingBaffle,
+        placementMode,
         fieldMode,
         lens_offset,
         tube_length,
@@ -268,7 +285,7 @@ export function calculateBaffles(params, customBaffles = []) {
     };
   }
 
-  // --- SPECIFY MODE (Default) ---
+  // --- SPECIFIED FIELD MODE (Automatic Placement OR Manual Placement with Specified Field) ---
   const d_field = input_d_field;
   const r_field = d_field / 2;
 
@@ -276,71 +293,89 @@ export function calculateBaffles(params, customBaffles = []) {
   const m_cone = (r_field - r_obj) / focal_length;
   const getLightConeRadius = (z_opt) => r_obj + m_cone * z_opt;
 
-  // Ray 1: From focal plane bottom field spot (z_opt = F, y = -r_field)
-  // to tube wall at physical tube front (z_opt = z_opt_tube_front, y = +r_tube)
-  let z_wall_prev = z_opt_tube_front;
+  if (placementMode === 'automatic') {
+    // Ray 1: From focal plane bottom field spot (z_opt = F, y = -r_field)
+    // to tube wall at physical tube front (z_opt = z_opt_tube_front, y = +r_tube)
+    let z_wall_prev = z_opt_tube_front;
 
-  for (let i = 0; i < max_baffles; i++) {
-    // Check if previous wall point is beyond tube back or focal plane
-    if (z_wall_prev >= z_opt_tube_back || z_wall_prev >= z_opt_focal_plane) {
-      break;
-    }
+    for (let i = 0; i < max_baffles; i++) {
+      // Check if previous wall point is beyond tube back or focal plane
+      if (z_wall_prev >= z_opt_tube_back || z_wall_prev >= z_opt_focal_plane) {
+        break;
+      }
 
-    // Ray equation from (z_opt = F, y = -r_field) to (z_opt = z_wall_prev, y = +r_tube)
-    const m_ray = (r_tube - (-r_field)) / (z_wall_prev - z_opt_focal_plane);
+      // Ray equation from (z_opt = F, y = -r_field) to (z_opt = z_wall_prev, y = +r_tube)
+      const m_ray = (r_tube - (-r_field)) / (z_wall_prev - z_opt_focal_plane);
 
-    // Intersect ray y = r_tube + m_ray * (z_opt - z_wall_prev)
-    // with top light cone y = r_obj + m_cone * z_opt
-    const z_opt_baffle = (r_obj - r_tube + m_ray * z_wall_prev) / (m_ray - m_cone);
+      // Intersect ray y = r_tube + m_ray * (z_opt - z_wall_prev)
+      // with top light cone y = r_obj + m_cone * z_opt
+      const z_opt_baffle = (r_obj - r_tube + m_ray * z_wall_prev) / (m_ray - m_cone);
 
-    if (z_opt_baffle >= z_opt_tube_back || z_opt_baffle >= z_opt_focal_plane) {
-      break;
-    }
+      if (z_opt_baffle >= z_opt_tube_back || z_opt_baffle >= z_opt_focal_plane) {
+        break;
+      }
 
-    const r_baffle = getLightConeRadius(z_opt_baffle);
-    const d_baffle = 2 * r_baffle;
-    const z_tube_baffle = z_opt_baffle - z_opt_tube_front;
+      const r_baffle = getLightConeRadius(z_opt_baffle);
+      const d_baffle = 2 * r_baffle;
+      const z_tube_baffle = z_opt_baffle - z_opt_tube_front;
 
-    rays.push({
-      baffleIndex: i + 1,
-      start: { z_opt: z_opt_focal_plane, y: -r_field, z_tube: z_opt_focal_plane - z_opt_tube_front },
-      wallHit: { z_opt: z_wall_prev, y: r_tube, z_tube: z_wall_prev - z_opt_tube_front },
-      baffleHit: { z_opt: z_opt_baffle, y: r_baffle, z_tube: z_tube_baffle }
-    });
-
-    baffles.push({
-      id: `calc_${i + 1}`,
-      isCustom: false,
-      isClipping: false,
-      number: i + 1,
-      z_opt: z_opt_baffle,
-      z_tube: z_tube_baffle,
-      dist_from_focal_plane: z_opt_focal_plane - z_opt_baffle,
-      aperture_radius: r_baffle,
-      aperture_diameter: d_baffle,
-      outer_diameter: d_tube,
-      wall_height: r_tube - r_baffle
-    });
-
-    // Determine next z_wall_prev based on selected algorithm
-    if (algorithm === ALGORITHM_MODES.STRICT_ZERO_WALL) {
-      z_wall_prev = z_opt_baffle;
-    } else {
-      const m_obj = (r_baffle - (-r_obj)) / z_opt_baffle;
-      const next_z_wall = (r_tube + r_obj) / m_obj;
-
-      greenReflectionRays.push({
+      rays.push({
         baffleIndex: i + 1,
-        start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
-        baffleTip: { z_opt: z_opt_baffle, y: r_baffle, z_tube: z_tube_baffle },
-        wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
+        start: { z_opt: z_opt_focal_plane, y: -r_field, z_tube: z_opt_focal_plane - z_opt_tube_front },
+        wallHit: { z_opt: z_wall_prev, y: r_tube, z_tube: z_wall_prev - z_opt_tube_front },
+        baffleHit: { z_opt: z_opt_baffle, y: r_baffle, z_tube: z_tube_baffle }
       });
 
-      z_wall_prev = next_z_wall;
+      baffles.push({
+        id: `calc_${i + 1}`,
+        isCustom: false,
+        isClipping: false,
+        number: i + 1,
+        z_opt: z_opt_baffle,
+        z_tube: z_tube_baffle,
+        dist_from_focal_plane: z_opt_focal_plane - z_opt_baffle,
+        aperture_radius: r_baffle,
+        aperture_diameter: d_baffle,
+        outer_diameter: d_tube,
+        wall_height: r_tube - r_baffle
+      });
+
+      // Determine next z_wall_prev based on selected algorithm
+      if (algorithm === ALGORITHM_MODES.STRICT_ZERO_WALL) {
+        z_wall_prev = z_opt_baffle;
+      } else {
+        const m_obj = (r_baffle - (-r_obj)) / z_opt_baffle;
+        const next_z_wall = (r_tube + r_obj) / m_obj;
+
+        greenReflectionRays.push({
+          baffleIndex: i + 1,
+          start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
+          baffleTip: { z_opt: z_opt_baffle, y: r_baffle, z_tube: z_tube_baffle },
+          wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
+        });
+
+        z_wall_prev = next_z_wall;
+      }
+    }
+  } else {
+    // Manual placement with a specified target field:
+    // Cast the initial guide ray from the bottom of the field spot to the front lip of the tube
+    if (z_opt_tube_front < z_opt_tube_back && z_opt_tube_front < z_opt_focal_plane) {
+      const m_ray_first = (r_tube - (-r_field)) / (z_opt_tube_front - z_opt_focal_plane);
+      const z_opt_first_hit = (r_obj - r_tube + m_ray_first * z_opt_tube_front) / (m_ray_first - m_cone);
+      if (z_opt_first_hit < z_opt_tube_back && z_opt_first_hit < z_opt_focal_plane) {
+        const r_first_hit = getLightConeRadius(z_opt_first_hit);
+        rays.push({
+          baffleIndex: 0,
+          start: { z_opt: z_opt_focal_plane, y: -r_field, z_tube: z_opt_focal_plane - z_opt_tube_front },
+          wallHit: { z_opt: z_opt_tube_front, y: r_tube, z_tube: 0 },
+          baffleHit: { z_opt: z_opt_first_hit, y: r_first_hit, z_tube: z_opt_first_hit - z_opt_tube_front }
+        });
+      }
     }
   }
 
-  // Process Custom Baffles (if any)
+  // Process Custom / Manual Baffles (if any)
   let hasClippingCustomBaffle = false;
   const allBaffles = [...baffles];
   if (Array.isArray(customBaffles) && customBaffles.length > 0) {
@@ -359,7 +394,8 @@ export function calculateBaffles(params, customBaffles = []) {
       }
       const r_baffle = d_baffle / 2;
       const d_field_candidate = d_obj + (focal_length / z_opt_safe) * (d_baffle - d_obj);
-      const isClipping = !isAutoDia && d_field_candidate <= 0;
+      // In Manual + Specified mode, changing vane height does not impact the specified illuminated field
+      const isClipping = placementMode === 'automatic' && !isAutoDia && d_field_candidate <= 0;
       if (isClipping) hasClippingCustomBaffle = true;
 
       allBaffles.push({
@@ -388,14 +424,42 @@ export function calculateBaffles(params, customBaffles = []) {
     b.number = idx + 1;
   });
 
-  // In Strict mode, add the objective visibility ray for the last valid baffle in the tube
-  if (algorithm === ALGORITHM_MODES.STRICT_ZERO_WALL && !hasClippingCustomBaffle) {
-    const wallEndForRays = Math.min(z_opt_tube_back, z_opt_focal_plane);
-    const validForRays = allBaffles.filter((b) => (
-      b.z_opt >= z_opt_tube_front && b.z_opt <= wallEndForRays && b.aperture_radius < r_tube
-    ));
-    const lastValidBaffle = validForRays.length > 0 ? validForRays[validForRays.length - 1] : null;
-    if (lastValidBaffle && lastValidBaffle.z_opt > 0 && (lastValidBaffle.aperture_radius + r_obj) > 0) {
+  const wallEndForRays = Math.min(z_opt_tube_back, z_opt_focal_plane);
+  const validForRays = allBaffles.filter((b) => (
+    b.z_opt >= z_opt_tube_front && b.z_opt <= wallEndForRays && b.aperture_radius < r_tube
+  ));
+  const lastValidBaffle = validForRays.length > 0 ? validForRays[validForRays.length - 1] : null;
+
+  // Add rays for custom/manual baffles in Specified field mode
+  if (!hasClippingCustomBaffle) {
+    allBaffles.forEach((b) => {
+      if (b.isCustom) {
+        if (b.z_opt < z_opt_focal_plane && (b.aperture_radius + r_field) > 0) {
+          const m_ray = (b.aperture_radius - (-r_field)) / (b.z_opt - z_opt_focal_plane);
+          const z_wall = z_opt_focal_plane + (r_tube - (-r_field)) / m_ray;
+          rays.push({
+            baffleIndex: b.number,
+            start: { z_opt: z_opt_focal_plane, y: -r_field, z_tube: z_opt_focal_plane - z_opt_tube_front },
+            wallHit: { z_opt: z_wall, y: r_tube, z_tube: z_wall - z_opt_tube_front },
+            baffleHit: { z_opt: b.z_opt, y: b.aperture_radius, z_tube: b.z_tube }
+          });
+        }
+
+        if (algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE && b.z_opt > 0 && (b.aperture_radius + r_obj) > 0) {
+          const m_obj = (b.aperture_radius - (-r_obj)) / b.z_opt;
+          const next_z_wall = (r_tube + r_obj) / m_obj;
+          greenReflectionRays.push({
+            baffleIndex: b.number,
+            start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
+            baffleTip: { z_opt: b.z_opt, y: b.aperture_radius, z_tube: b.z_tube },
+            wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
+          });
+        }
+      }
+    });
+
+    // In Strict mode, add the objective visibility ray for the last valid baffle in the tube
+    if (algorithm === ALGORITHM_MODES.STRICT_ZERO_WALL && lastValidBaffle && lastValidBaffle.z_opt > 0 && (lastValidBaffle.aperture_radius + r_obj) > 0) {
       const m_obj = (lastValidBaffle.aperture_radius - (-r_obj)) / lastValidBaffle.z_opt;
       const next_z_wall = (r_tube + r_obj) / m_obj;
       greenReflectionRays.push({
@@ -431,6 +495,7 @@ export function calculateBaffles(params, customBaffles = []) {
       d_tube,
       d_field,
       isClippedField: hasClippingCustomBaffle,
+      placementMode,
       fieldMode,
       lens_offset,
       tube_length,

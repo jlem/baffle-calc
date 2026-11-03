@@ -102,3 +102,16 @@ export function exportPNG(canvasElement) {
   link.href = canvasElement.toDataURL('image/png');
   link.click();
 }
+
+export function exportJSONFile(jsonString, filename = 'baffle_configuration.json') {
+  const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+

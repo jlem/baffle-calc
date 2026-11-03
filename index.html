@@ -22,6 +22,8 @@
 
     <div class="header-actions">
       <button id="btnExportCSV" class="btn">📊 Export CSV</button>
+      <button id="btnExportJSON" class="btn">📤 Export JSON</button>
+      <button id="btnImportJSON" class="btn">📥 Import JSON</button>
       <button id="btnExportSVG" class="btn">📐 Export SVG CAD</button>
       <button id="btnExportPNG" class="btn btn-primary">📷 Save Image</button>
     </div>
@@ -44,9 +46,9 @@
           <label class="form-label">
             <span>Baffle Placement Mode</span>
           </label>
-          <div class="segmented-control" id="fieldModeControl" role="group" aria-label="Baffle Placement Mode">
-            <button type="button" class="segment-btn active" data-mode="specify">Automatic</button>
-            <button type="button" class="segment-btn" data-mode="fromBaffles">Manual</button>
+          <div class="segmented-control" id="placementModeControl" role="group" aria-label="Baffle Placement Mode">
+            <button type="button" class="segment-btn active" data-mode="automatic">Automatic</button>
+            <button type="button" class="segment-btn" data-mode="manual">Manual</button>
           </div>
         </div>
 
@@ -119,6 +121,10 @@
           <div class="input-row">
             <input type="number" id="inputDField" value="25" step="0.1" min="0" max="200">
             <span id="unitDField" style="font-size:0.8rem; color:var(--text-muted)">mm</span>
+          </div>
+          <div class="segmented-control" id="fieldModeControl" role="group" aria-label="Illuminated Field Mode">
+            <button type="button" class="segment-btn" data-field-mode="computed">Computed</button>
+            <button type="button" class="segment-btn active" data-field-mode="specified">Specified</button>
           </div>
         </div>
       </section>
@@ -220,17 +226,53 @@
         </div>
       </div>
 
-      <!-- Debug Mode JSON View (Visible when ?debug is in URL) -->
-      <div id="debugCard" class="card debug-card" style="display: none;">
-        <div class="card-header">
-          <h2 class="card-title">🐞 Debug Configuration State (JSON)</h2>
-          <button id="btnCopyDebugJson" type="button" class="btn" style="padding: 0.3rem 0.75rem; font-size: 0.78rem;">📋 Copy JSON</button>
-        </div>
-        <textarea id="debugJsonOutput" class="debug-json-view" readonly spellcheck="false" aria-label="Debug Configuration JSON"></textarea>
-      </div>
-
     </section>
   </main>
+
+  <!-- Export JSON Modal -->
+  <div id="exportJsonModal" class="modal-backdrop" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="exportJsonModalTitle">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="exportJsonModalTitle" class="modal-title">📤 Export Configuration (JSON)</h3>
+        <button type="button" id="btnCloseExportModalX" class="modal-close-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-subtitle">Copy the JSON below or download it as a file to save or share your complete telescope &amp; baffle setup.</p>
+        <textarea id="exportJsonTextarea" class="json-modal-textarea" readonly spellcheck="false" aria-label="Exported Configuration JSON"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btnCloseExportModal" class="btn">Close</button>
+        <button type="button" id="btnCopyExportJson" class="btn">📋 Copy JSON</button>
+        <button type="button" id="btnDownloadExportJson" class="btn btn-primary">💾 Download .json</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import JSON Modal -->
+  <div id="importJsonModal" class="modal-backdrop" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="importJsonModalTitle">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="importJsonModalTitle" class="modal-title">📥 Import Configuration (JSON)</h3>
+        <button type="button" id="btnCloseImportModalX" class="modal-close-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="jsonDropZone" class="json-drop-zone" tabindex="0" role="button" aria-label="Drag and drop a JSON file here or click to browse">
+          <input type="file" id="inputJsonFile" accept=".json,application/json" style="display: none;">
+          <div class="drop-zone-icon">📄</div>
+          <div id="jsonDropZoneText" class="drop-zone-text">
+            <strong>Drag &amp; drop a JSON file here</strong>, or <span class="drop-zone-browse">click to browse</span>
+          </div>
+        </div>
+        <label for="importJsonTextarea" class="modal-field-label">Or paste configuration JSON below:</label>
+        <textarea id="importJsonTextarea" class="json-modal-textarea" placeholder="Paste configuration JSON here..." spellcheck="false" aria-label="Import Configuration JSON"></textarea>
+        <div id="importJsonError" class="json-import-error" style="display: none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btnCancelImportModal" class="btn">Cancel</button>
+        <button type="button" id="btnApplyImportJson" class="btn btn-primary">✅ Apply Configuration</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Application Footer -->
   <footer class="app-footer">
