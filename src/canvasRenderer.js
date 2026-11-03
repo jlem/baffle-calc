@@ -94,11 +94,17 @@ export class BaffleCanvasRenderer {
 
   fitToView() {
     if (!this.baffleData) return;
-    const { opticalBounds, lightCone } = this.baffleData;
-    const minZ = Math.min(0, opticalBounds.z_opt_tube_front) - 20;
+    const { opticalBounds, lightCone, dewShield } = this.baffleData;
+    const frontExtent = dewShield?.hasDewShield
+      ? Math.min(0, opticalBounds.z_opt_tube_front, dewShield.z_opt_front)
+      : Math.min(0, opticalBounds.z_opt_tube_front);
+    const minZ = frontExtent - 20;
     const maxZ = opticalBounds.z_opt_focal_plane + 40;
     const totalLength = maxZ - minZ;
-    const totalHeight = lightCone.r_tube * 2.6;
+    const maxRadius = dewShield?.hasDewShield
+      ? Math.max(lightCone.r_tube, dewShield.radius)
+      : lightCone.r_tube;
+    const totalHeight = maxRadius * 2.6;
 
     const rect = this.canvas.getBoundingClientRect();
     const scaleX = (rect.width - 100) / totalLength;
@@ -568,6 +574,63 @@ export class BaffleCanvasRenderer {
       ctx.fillText('Tube Front (z = 0)', xTubeFront - 45, yTopWall - 16);
     }
 
+    // --- Dew Shield (Berfield Minimum Mode) ---
+    const dewShield = this.baffleData.dewShield;
+    if (dewShield && dewShield.hasDewShield) {
+      const xDewFront = toX(dewShield.z_opt_front);
+      const xDewRear = toX(z_opt_lens);
+      const yTopDew = toY(dewShield.radius);
+      const yBotDew = toY(-dewShield.radius);
+      const isDewActive = dewShield.isActive;
+
+      ctx.save();
+      if (this.toggles.shadows) {
+        ctx.fillStyle = isDewActive ? 'rgba(14, 116, 144, 0.14)' : 'rgba(30, 41, 59, 0.25)';
+        ctx.fillRect(xDewFront, yTopDew, xDewRear - xDewFront, yBotDew - yTopDew);
+      }
+
+      ctx.strokeStyle = isDewActive ? '#22d3ee' : 'rgba(148, 163, 184, 0.45)';
+      ctx.lineWidth = 2;
+      if (!isDewActive) {
+        ctx.setLineDash([5, 4]);
+      }
+
+      // Top and bottom dew shield walls + rear mounting flange to objective/tube
+      ctx.beginPath();
+      ctx.moveTo(xDewFront, yTopDew);
+      ctx.lineTo(xDewRear, yTopDew);
+      ctx.lineTo(xDewRear, yTopWall);
+      ctx.moveTo(xDewFront, yBotDew);
+      ctx.lineTo(xDewRear, yBotDew);
+      ctx.lineTo(xDewRear, yBotWall);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Front lip markers
+      ctx.strokeStyle = isDewActive ? '#06b6d4' : 'rgba(148, 163, 184, 0.45)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(xDewFront, yTopDew - 6);
+      ctx.lineTo(xDewFront, yTopDew + 4);
+      ctx.moveTo(xDewFront, yBotDew - 4);
+      ctx.lineTo(xDewFront, yBotDew + 6);
+      ctx.stroke();
+
+      if (this.toggles.labels) {
+        const factor = this.unit === 'in' ? 1 / 25.4 : 1;
+        const uLabel = this.unit === 'in' ? 'in' : 'mm';
+        ctx.fillStyle = isDewActive ? '#22d3ee' : '#94a3b8';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        const statusSuffix = isDewActive ? '' : ' [Disabled]';
+        ctx.fillText(
+          `Dew Shield (Ø${(dewShield.diameter * factor).toFixed(this.precision)}${uLabel}, L=${(dewShield.length * factor).toFixed(this.precision)}${uLabel})${statusSuffix}`,
+          xDewFront,
+          yTopDew - 12
+        );
+      }
+      ctx.restore();
+    }
+
     // --- Objective Lens (Flat Rectangle Stand-in) ---
     // The rear surface of the objective lens is at z_opt = 0 (xLensRear)
     const lensThickness = 15; // 15mm visual thickness for the objective lens assembly
@@ -706,6 +769,18 @@ export class BaffleCanvasRenderer {
           const yStart = toY(gray.start.y);
           const xWall = toX(gray.wallHit.z_opt);
           const yWall = toY(gray.wallHit.y);
+
+          if (gray.dewStart) {
+            const xDewStart = toX(gray.dewStart.z_opt);
+            const yDewStart = toY(gray.dewStart.y);
+            ctx.strokeStyle = 'rgba(34, 211, 238, 0.45)';
+            ctx.lineWidth = 1.2;
+            ctx.setLineDash([3, 4]);
+            ctx.beginPath();
+            ctx.moveTo(xDewStart, yDewStart);
+            ctx.lineTo(xStart, yStart);
+            ctx.stroke();
+          }
 
           ctx.strokeStyle = '#00ff88'; // Bright green dotted ray
           ctx.lineWidth = 1.5;

@@ -272,4 +272,75 @@ test('Manual placement + Specified field mode: creates initial ray and keeps spe
   assert.equal(resizedManualSpec.rays.length, 2); // Initial front-lip ray + Baffle #1 ray
 });
 
+test('Dew Shield in Berfield Minimum mode: constrains objective rays, extends baffle shade, and respects disable toggle', () => {
+  // 1. Baseline without dew shield
+  const baseline = calculateBaffles({
+    ...BASE_PARAMS,
+    placementMode: 'automatic',
+    fieldMode: 'specified',
+    algorithm: ALGORITHM_MODES.MINIMUM_BAFFLE
+  });
+
+  // 2. With active dew shield (D_dew = 80mm, L_dew = 150mm)
+  const withDew = calculateBaffles({
+    ...BASE_PARAMS,
+    placementMode: 'automatic',
+    fieldMode: 'specified',
+    dew_shield_diameter: 80,
+    dew_shield_length: 150,
+    dew_shield_disabled: false,
+    algorithm: ALGORITHM_MODES.MINIMUM_BAFFLE
+  });
+
+  assert.equal(withDew.dewShield.hasDewShield, true);
+  assert.equal(withDew.dewShield.isActive, true);
+  // Baffle 1 position is identical (determined by field spot to tube front lip),
+  // but its green objective ray is constrained by the dew shield front lip (-150, -40)
+  assert.ok(Math.abs(withDew.baffles[0].z_opt - baseline.baffles[0].z_opt) < 1e-6);
+  const ray1Base = baseline.greenReflectionRays[0];
+  const ray1Dew = withDew.greenReflectionRays[0];
+  assert.equal(ray1Base.dewStart, null);
+  assert.equal(ray1Base.start.y, -30);
+  assert.ok(ray1Dew.dewStart !== null);
+  assert.equal(ray1Dew.dewStart.z_opt, -150);
+  assert.equal(ray1Dew.dewStart.y, -40);
+  assert.ok(ray1Dew.start.y > -30); // Crosses z_opt = 0 above bottom edge of objective (-6.927mm)
+  assert.ok(ray1Dew.wallHit.z_opt > ray1Base.wallHit.z_opt); // Hits upper tube wall further back
+  // Because Baffle 1 shades further back, Baffle 2 is placed further down the tube
+  assert.ok(withDew.baffles[1].z_opt > baseline.baffles[1].z_opt);
+
+  // 3. With dew_shield_disabled = true, rays and baffles match baseline
+  const disabledDew = calculateBaffles({
+    ...BASE_PARAMS,
+    placementMode: 'automatic',
+    fieldMode: 'specified',
+    dew_shield_diameter: 80,
+    dew_shield_length: 150,
+    dew_shield_disabled: true,
+    algorithm: ALGORITHM_MODES.MINIMUM_BAFFLE
+  });
+  assert.equal(disabledDew.dewShield.hasDewShield, true);
+  assert.equal(disabledDew.dewShield.isActive, false);
+  assert.equal(disabledDew.baffles.length, baseline.baffles.length);
+  assert.ok(Math.abs(disabledDew.baffles[1].z_opt - baseline.baffles[1].z_opt) < 1e-6);
+  assert.equal(disabledDew.greenReflectionRays[0].start.y, -30);
+
+  // 4. Impossible objective ray is excluded when blocked by dew shield + objective geometry
+  // Baffle at z_tube = 2mm (z_opt = 5mm) with diameter 64mm (r_k = 32mm > r_obj = 30mm) and long 300mm dew shield
+  const blockedRayRes = calculateBaffles(
+    {
+      ...BASE_PARAMS,
+      placementMode: 'manual',
+      fieldMode: 'specified',
+      dew_shield_diameter: 60,
+      dew_shield_length: 300,
+      dew_shield_disabled: false,
+      algorithm: ALGORITHM_MODES.MINIMUM_BAFFLE
+    },
+    [{ id: 'b_front', z_tube: 2, aperture_diameter: 64, autoDiameter: false }]
+  );
+  assert.equal(blockedRayRes.greenReflectionRays.length, 0);
+});
+
+
 
