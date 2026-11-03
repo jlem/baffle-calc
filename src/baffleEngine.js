@@ -70,9 +70,19 @@ export function calculateBaffles(params, customBaffles = []) {
     fieldMode: rawFieldMode = 'specified', // 'computed' or 'specified' (legacy: 'fromBaffles' or 'specify')
     lens_offset = 0,// Lens position relative to tube front (mm). Lens left of tube front = negative
     tube_length,   // Physical tube length (mm)
+    dew_shield_diameter = 0, // Dew shield inner diameter (mm)
+    dew_shield_length = 0,   // Dew shield distance past front of objective (mm)
+    dew_shield_disabled = false, // Whether dew shield impact on objective rays is disabled
     algorithm = ALGORITHM_MODES.STRICT_ZERO_WALL,
     max_baffles = 25
   } = params;
+
+  const cleanDewDiameter = Math.max(0, Number(dew_shield_diameter) || 0);
+  const cleanDewLength = Math.max(0, Number(dew_shield_length) || 0);
+  const isDewShieldDisabled = Boolean(dew_shield_disabled);
+  const hasDewShield = algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE && cleanDewDiameter > 0 && cleanDewLength > 0;
+  const isDewShieldActive = hasDewShield && !isDewShieldDisabled;
+  const r_dew = cleanDewDiameter / 2;
 
   // Normalize placementMode ('automatic' | 'manual') and fieldMode ('computed' | 'specified')
   // while preserving backward compatibility with legacy callers passing fieldMode: 'specify' | 'fromBaffles'
@@ -98,6 +108,16 @@ export function calculateBaffles(params, customBaffles = []) {
   const z_opt_tube_back = z_opt_tube_front + tube_length;
   const z_opt_focal_plane = focal_length; // z_opt = F
 
+  const dewShield = {
+    hasDewShield,
+    isActive: isDewShieldActive,
+    diameter: cleanDewDiameter,
+    radius: r_dew,
+    length: cleanDewLength,
+    disabled: isDewShieldDisabled,
+    z_opt_front: -cleanDewLength
+  };
+
   const baffles = [];
   const rays = [];
   const greenReflectionRays = [];
@@ -116,8 +136,12 @@ export function calculateBaffles(params, customBaffles = []) {
           fieldMode,
           lens_offset,
           tube_length,
+          dew_shield_diameter: cleanDewDiameter,
+          dew_shield_length: cleanDewLength,
+          dew_shield_disabled: isDewShieldDisabled,
           algorithm
         },
+        dewShield,
         opticalBounds: {
           z_opt_lens: 0,
           z_opt_tube_front,
@@ -233,15 +257,22 @@ export function calculateBaffles(params, customBaffles = []) {
           });
         }
 
-        if ((algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE || b === lastValidBaffle) && b.z_opt > 0 && (b.aperture_radius + r_obj) > 0) {
-          const m_obj = (b.aperture_radius - (-r_obj)) / b.z_opt;
-          const next_z_wall = (r_tube + r_obj) / m_obj;
-          greenReflectionRays.push({
-            baffleIndex: b.number,
-            start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
-            baffleTip: { z_opt: b.z_opt, y: b.aperture_radius, z_tube: b.z_tube },
-            wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
-          });
+        if (algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE || b === lastValidBaffle) {
+          const useDew = (algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE) && isDewShieldActive;
+          const objRay = computeObjectiveRayForBaffle(
+            b.number,
+            b.z_opt,
+            b.aperture_radius,
+            r_obj,
+            r_tube,
+            z_opt_tube_front,
+            useDew,
+            r_dew,
+            cleanDewLength
+          );
+          if (objRay.valid && objRay.ray) {
+            greenReflectionRays.push(objRay.ray);
+          }
         }
       }
     });
@@ -261,7 +292,7 @@ export function calculateBaffles(params, customBaffles = []) {
       hasLightCone
     };
 
-    const visibleWallSections = computeVisibleWallSections(opticalBounds, lightCone, allBaffles, algorithm);
+    const visibleWallSections = computeVisibleWallSections(opticalBounds, lightCone, allBaffles, algorithm, dewShield);
 
     return {
       params: {
@@ -274,8 +305,12 @@ export function calculateBaffles(params, customBaffles = []) {
         fieldMode,
         lens_offset,
         tube_length,
+        dew_shield_diameter: cleanDewDiameter,
+        dew_shield_length: cleanDewLength,
+        dew_shield_disabled: isDewShieldDisabled,
         algorithm
       },
+      dewShield,
       opticalBounds,
       lightCone,
       baffles: allBaffles,
@@ -344,17 +379,24 @@ export function calculateBaffles(params, customBaffles = []) {
       if (algorithm === ALGORITHM_MODES.STRICT_ZERO_WALL) {
         z_wall_prev = z_opt_baffle;
       } else {
-        const m_obj = (r_baffle - (-r_obj)) / z_opt_baffle;
-        const next_z_wall = (r_tube + r_obj) / m_obj;
-
-        greenReflectionRays.push({
-          baffleIndex: i + 1,
-          start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
-          baffleTip: { z_opt: z_opt_baffle, y: r_baffle, z_tube: z_tube_baffle },
-          wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
-        });
-
-        z_wall_prev = next_z_wall;
+        const objRay = computeObjectiveRayForBaffle(
+          i + 1,
+          z_opt_baffle,
+          r_baffle,
+          r_obj,
+          r_tube,
+          z_opt_tube_front,
+          isDewShieldActive,
+          r_dew,
+          cleanDewLength
+        );
+        if (objRay.valid && objRay.ray) {
+          greenReflectionRays.push(objRay.ray);
+          z_wall_prev = objRay.ray.wallHit.z_opt;
+        } else {
+          // Ray is completely blocked by the dew shield (or invalid), so remaining tube is shaded
+          z_wall_prev = Infinity;
+        }
       }
     }
   } else {
@@ -419,7 +461,7 @@ export function calculateBaffles(params, customBaffles = []) {
   // Sort all baffles by distance from tube front (z_tube) ascending
   allBaffles.sort((a, b) => a.z_tube - b.z_tube);
 
-  // Re-number sequentially
+  // Re-number sequentially & sync baffleIndex on automatic greenReflectionRays
   allBaffles.forEach((b, idx) => {
     b.number = idx + 1;
   });
@@ -445,29 +487,41 @@ export function calculateBaffles(params, customBaffles = []) {
           });
         }
 
-        if (algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE && b.z_opt > 0 && (b.aperture_radius + r_obj) > 0) {
-          const m_obj = (b.aperture_radius - (-r_obj)) / b.z_opt;
-          const next_z_wall = (r_tube + r_obj) / m_obj;
-          greenReflectionRays.push({
-            baffleIndex: b.number,
-            start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
-            baffleTip: { z_opt: b.z_opt, y: b.aperture_radius, z_tube: b.z_tube },
-            wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
-          });
+        if (algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE) {
+          const objRay = computeObjectiveRayForBaffle(
+            b.number,
+            b.z_opt,
+            b.aperture_radius,
+            r_obj,
+            r_tube,
+            z_opt_tube_front,
+            isDewShieldActive,
+            r_dew,
+            cleanDewLength
+          );
+          if (objRay.valid && objRay.ray) {
+            greenReflectionRays.push(objRay.ray);
+          }
         }
       }
     });
 
     // In Strict mode, add the objective visibility ray for the last valid baffle in the tube
-    if (algorithm === ALGORITHM_MODES.STRICT_ZERO_WALL && lastValidBaffle && lastValidBaffle.z_opt > 0 && (lastValidBaffle.aperture_radius + r_obj) > 0) {
-      const m_obj = (lastValidBaffle.aperture_radius - (-r_obj)) / lastValidBaffle.z_opt;
-      const next_z_wall = (r_tube + r_obj) / m_obj;
-      greenReflectionRays.push({
-        baffleIndex: lastValidBaffle.number,
-        start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
-        baffleTip: { z_opt: lastValidBaffle.z_opt, y: lastValidBaffle.aperture_radius, z_tube: lastValidBaffle.z_tube },
-        wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
-      });
+    if (algorithm === ALGORITHM_MODES.STRICT_ZERO_WALL && lastValidBaffle) {
+      const objRay = computeObjectiveRayForBaffle(
+        lastValidBaffle.number,
+        lastValidBaffle.z_opt,
+        lastValidBaffle.aperture_radius,
+        r_obj,
+        r_tube,
+        z_opt_tube_front,
+        false,
+        0,
+        0
+      );
+      if (objRay.valid && objRay.ray) {
+        greenReflectionRays.push(objRay.ray);
+      }
     }
   }
 
@@ -486,7 +540,7 @@ export function calculateBaffles(params, customBaffles = []) {
     hasLightCone: !hasClippingCustomBaffle
   };
 
-  const visibleWallSections = computeVisibleWallSections(opticalBounds, lightCone, allBaffles, algorithm);
+  const visibleWallSections = computeVisibleWallSections(opticalBounds, lightCone, allBaffles, algorithm, dewShield);
 
   return {
     params: {
@@ -499,8 +553,12 @@ export function calculateBaffles(params, customBaffles = []) {
       fieldMode,
       lens_offset,
       tube_length,
+      dew_shield_diameter: cleanDewDiameter,
+      dew_shield_length: cleanDewLength,
+      dew_shield_disabled: isDewShieldDisabled,
       algorithm
     },
+    dewShield,
     opticalBounds,
     lightCone,
     baffles: allBaffles,
@@ -511,10 +569,89 @@ export function calculateBaffles(params, customBaffles = []) {
 }
 
 /**
+ * Computes the limiting direct ray from the objective (z_opt = 0) through baffle k's inner edge (z_k, +r_k)
+ * to the upper tube wall (y = +r_tube), optionally constrained by a dew shield extending to z_opt = -l_dew
+ * with radius r_dew.
+ */
+function computeObjectiveRayForBaffle(
+  baffleNumber,
+  z_k,
+  r_k,
+  r_obj,
+  r_tube,
+  z_opt_tube_front,
+  useDewShield = false,
+  r_dew = 0,
+  l_dew = 0
+) {
+  if (z_k <= 0 || r_k >= r_tube) {
+    return { valid: false, blocked: false, ray: null };
+  }
+
+  if (!useDewShield || r_dew <= 0 || l_dew <= 0) {
+    if ((r_k + r_obj) <= 0) {
+      return { valid: false, blocked: false, ray: null };
+    }
+    const m_obj = (r_k + r_obj) / z_k;
+    if (m_obj <= 0) {
+      return { valid: false, blocked: false, ray: null };
+    }
+    const next_z_wall = (r_tube + r_obj) / m_obj;
+    return {
+      valid: true,
+      blocked: false,
+      ray: {
+        baffleIndex: baffleNumber,
+        start: { z_opt: 0, y: -r_obj, z_tube: -z_opt_tube_front },
+        dewStart: null,
+        baffleTip: { z_opt: z_k, y: r_k, z_tube: z_k - z_opt_tube_front },
+        wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
+      }
+    };
+  }
+
+  // With active dew shield:
+  // A valid ray passing through (z_k, +r_k) must pass through both:
+  // 1) Objective aperture at z_opt = 0: y(0) in [-r_obj_eff, +r_obj_eff]
+  // 2) Dew shield front opening at z_opt = -l_dew: y(-l_dew) in [-r_dew, +r_dew]
+  const r_obj_eff = Math.min(r_obj, r_dew);
+  const m_obj_max = (r_k + r_obj_eff) / z_k;
+  const m_dew_max = (r_k + r_dew) / (z_k + l_dew);
+  const m_max = Math.min(m_obj_max, m_dew_max);
+
+  const m_obj_min = (r_k - r_obj_eff) / z_k;
+  const m_dew_min = (r_k - r_dew) / (z_k + l_dew);
+  const m_min = Math.max(0, m_obj_min, m_dew_min);
+
+  if (m_max <= 0 || m_max <= m_min) {
+    return { valid: false, blocked: true, ray: null };
+  }
+
+  const m_eff = m_max;
+  const y_obj = Math.max(-r_obj_eff, r_k - m_eff * z_k);
+  const next_z_wall = z_k + (r_tube - r_k) / m_eff;
+  const constrainedByDew = m_dew_max < m_obj_max;
+
+  return {
+    valid: true,
+    blocked: false,
+    ray: {
+      baffleIndex: baffleNumber,
+      start: { z_opt: 0, y: y_obj, z_tube: -z_opt_tube_front },
+      dewStart: constrainedByDew
+        ? { z_opt: -l_dew, y: -r_dew, z_tube: -l_dew - z_opt_tube_front }
+        : null,
+      baffleTip: { z_opt: z_k, y: r_k, z_tube: z_k - z_opt_tube_front },
+      wallHit: { z_opt: next_z_wall, y: r_tube, z_tube: next_z_wall - z_opt_tube_front }
+    }
+  };
+}
+
+/**
  * Computes sections of the physical tube wall that are visible from the fully illuminated field
  * according to the selected strategy ('strictZeroWall' or 'minimumBaffle').
  */
-function computeVisibleWallSections(opticalBounds, lightCone, baffles, algorithm) {
+function computeVisibleWallSections(opticalBounds, lightCone, baffles, algorithm, dewShield = null) {
   if (!lightCone.hasLightCone) return [];
 
   const { z_opt_tube_front, z_opt_tube_back, z_opt_focal_plane } = opticalBounds;
@@ -528,6 +665,7 @@ function computeVisibleWallSections(opticalBounds, lightCone, baffles, algorithm
     b.z_opt >= wallStart && b.z_opt <= wallEnd && b.aperture_radius < r_tube
   ));
   const lastBaffle = validBaffles.length > 0 ? validBaffles[validBaffles.length - 1] : null;
+  const useDew = (algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE) && Boolean(dewShield && dewShield.isActive);
 
   const protectedIntervals = [];
 
@@ -545,14 +683,33 @@ function computeVisibleWallSections(opticalBounds, lightCone, baffles, algorithm
       }
     }
 
-    // 2. Interval behind baffle k shaded from direct objective light (z_opt = 0, y = -r_obj):
+    // 2. Interval behind baffle k shaded from direct objective light:
     //    Applied to all baffles in Minimum Baffle mode, and only to the last baffle in Strict mode.
-    if ((algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE || b === lastBaffle) && z_k > 0 && (r_k + r_obj) > 0) {
-      const z_shade_end = ((r_tube + r_obj) / (r_k + r_obj)) * z_k;
-      const start = Math.max(wallStart, z_k);
-      const end = Math.min(wallEnd, z_shade_end);
-      if (end > start) {
-        protectedIntervals.push([start, end]);
+    if ((algorithm === ALGORITHM_MODES.MINIMUM_BAFFLE || b === lastBaffle) && z_k > 0) {
+      const objRay = computeObjectiveRayForBaffle(
+        b.number,
+        z_k,
+        r_k,
+        r_obj,
+        r_tube,
+        z_opt_tube_front,
+        useDew,
+        dewShield ? dewShield.radius : 0,
+        dewShield ? dewShield.length : 0
+      );
+      if (objRay.blocked) {
+        const start = Math.max(wallStart, z_k);
+        const end = wallEnd;
+        if (end > start) {
+          protectedIntervals.push([start, end]);
+        }
+      } else if (objRay.valid && objRay.ray) {
+        const z_shade_end = objRay.ray.wallHit.z_opt;
+        const start = Math.max(wallStart, z_k);
+        const end = Math.min(wallEnd, z_shade_end);
+        if (end > start) {
+          protectedIntervals.push([start, end]);
+        }
       }
     }
   });

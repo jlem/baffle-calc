@@ -53,6 +53,9 @@ export class UIController {
     this.lastManualDField = null;
     this.dom.inputLensOffset.value = -3;
     this.dom.inputTubeLength.value = 1008;
+    if (this.dom.inputDewDiameter) this.dom.inputDewDiameter.value = 0;
+    if (this.dom.inputDewLength) this.dom.inputDewLength.value = 0;
+    if (this.dom.chkDisableDewShield) this.dom.chkDisableDewShield.checked = false;
     this.dom.selectAlgorithm.value = 'strictZeroWall';
     this.dom.selectUnit.value = 'mm';
     if (this.dom.selectPrecision) this.dom.selectPrecision.value = '1';
@@ -116,6 +119,12 @@ export class UIController {
     }
   }
 
+  _syncDewShieldControlsVisibility() {
+    if (!this.dom.dewShieldControls || !this.dom.selectAlgorithm) return;
+    const isMinBaffle = this.dom.selectAlgorithm.value === 'minimumBaffle';
+    this.dom.dewShieldControls.style.display = isMinBaffle ? 'flex' : 'none';
+  }
+
   _syncModeControls() {
     if (this.dom.placementModeControl) {
       const buttons = this.dom.placementModeControl.querySelectorAll('.segment-btn');
@@ -149,6 +158,8 @@ export class UIController {
       this.dom.inputDField.classList.remove('readonly-field');
       this.dom.inputDField.value = this.specifiedDField;
     }
+
+    this._syncDewShieldControlsVisibility();
   }
 
   requestUpdate() {
@@ -173,6 +184,10 @@ export class UIController {
       fieldModeControl: document.getElementById('fieldModeControl'),
       inputLensOffset: document.getElementById('inputLensOffset'),
       inputTubeLength: document.getElementById('inputTubeLength'),
+      dewShieldControls: document.getElementById('dewShieldControls'),
+      inputDewDiameter: document.getElementById('inputDewDiameter'),
+      inputDewLength: document.getElementById('inputDewLength'),
+      chkDisableDewShield: document.getElementById('chkDisableDewShield'),
       selectAlgorithm: document.getElementById('selectAlgorithm'),
       selectUnit: document.getElementById('selectUnit'),
       selectPrecision: document.getElementById('selectPrecision'),
@@ -184,6 +199,8 @@ export class UIController {
       valDField: document.getElementById('valDField'),
       valLensOffset: document.getElementById('valLensOffset'),
       valTubeLength: document.getElementById('valTubeLength'),
+      valDewDiameter: document.getElementById('valDewDiameter'),
+      valDewLength: document.getElementById('valDewLength'),
 
       // Outputs
       baffleCountBadge: document.getElementById('baffleCountBadge'),
@@ -263,8 +280,11 @@ export class UIController {
       this.dom.inputDField,
       this.dom.inputLensOffset,
       this.dom.inputTubeLength,
+      this.dom.inputDewDiameter,
+      this.dom.inputDewLength,
+      this.dom.chkDisableDewShield,
       this.dom.selectAlgorithm
-    ];
+    ].filter(Boolean);
 
     inputs.forEach(input => {
       input.addEventListener('input', () => {
@@ -687,11 +707,15 @@ export class UIController {
       fieldMode: this.fieldMode,
       lens_offset: parseFloat(this.dom.inputLensOffset.value) || -3,
       tube_length: parseFloat(this.dom.inputTubeLength.value) || 1008,
+      dew_shield_diameter: Math.max(0, parseFloat(this.dom.inputDewDiameter?.value) || 0),
+      dew_shield_length: Math.max(0, parseFloat(this.dom.inputDewLength?.value) || 0),
+      dew_shield_disabled: Boolean(this.dom.chkDisableDewShield?.checked),
       algorithm: this.dom.selectAlgorithm.value
     };
   }
 
   update() {
+    this._syncDewShieldControlsVisibility();
     const params = this.getInputs();
     this.currentBaffleData = calculateBaffles(params, this.getActiveCustomBaffles());
     if (this.placementMode === 'manual' && this.fieldMode === 'computed' && this.currentBaffleData.params.d_field > 0) {
@@ -708,6 +732,12 @@ export class UIController {
     this.dom.valDTube.textContent = `${(params.d_tube * factor).toFixed(p)} ${uLabel}`;
     this.dom.valLensOffset.textContent = `${(params.lens_offset * factor).toFixed(p)} ${uLabel}`;
     this.dom.valTubeLength.textContent = `${(params.tube_length * factor).toFixed(p)} ${uLabel}`;
+    if (this.dom.valDewDiameter) {
+      this.dom.valDewDiameter.textContent = `${(params.dew_shield_diameter * factor).toFixed(p)} ${uLabel}`;
+    }
+    if (this.dom.valDewLength) {
+      this.dom.valDewLength.textContent = `${(params.dew_shield_length * factor).toFixed(p)} ${uLabel}`;
+    }
 
     if (this.dom.unitDField) {
       this.dom.unitDField.textContent = uLabel;
@@ -774,7 +804,10 @@ export class UIController {
       mechanicalGeometry: {
         d_tube_mm: params.d_tube,
         lens_offset_mm: params.lens_offset,
-        tube_length_mm: params.tube_length
+        tube_length_mm: params.tube_length,
+        dew_shield_diameter_mm: params.dew_shield_diameter,
+        dew_shield_length_mm: params.dew_shield_length,
+        dew_shield_disabled: Boolean(params.dew_shield_disabled)
       },
       opticalBounds,
       lightCone,
@@ -914,6 +947,17 @@ export class UIController {
       const lensOff = Number(mech.lens_offset_mm ?? mech.lens_offset);
       if (!isNaN(lensOff) && this.dom.inputLensOffset) {
         this.dom.inputLensOffset.value = lensOff;
+      }
+      const dewDia = Number(mech.dew_shield_diameter_mm ?? mech.dew_shield_diameter);
+      if (!isNaN(dewDia) && dewDia >= 0 && this.dom.inputDewDiameter) {
+        this.dom.inputDewDiameter.value = dewDia;
+      }
+      const dewLen = Number(mech.dew_shield_length_mm ?? mech.dew_shield_length);
+      if (!isNaN(dewLen) && dewLen >= 0 && this.dom.inputDewLength) {
+        this.dom.inputDewLength.value = dewLen;
+      }
+      if (typeof mech.dew_shield_disabled === 'boolean' && this.dom.chkDisableDewShield) {
+        this.dom.chkDisableDewShield.checked = mech.dew_shield_disabled;
       }
     }
 
