@@ -4,25 +4,25 @@
  */
 
 import { calculateBaffles } from './baffleEngine.js';
-import { exportCSV, exportSVG, exportPNG } from './exportManager.js';
+import { exportCSV, exportSVG, exportPNG, exportJSONFile } from './exportManager.js';
 
 export class UIController {
   constructor(canvasRenderer) {
     this.renderer = canvasRenderer;
     this.unit = 'mm'; // 'mm' or 'in'
     this.precision = 1; // Default to 0.1mm (1 decimal place)
-    this.fieldMode = 'specify'; // 'specify' or 'fromBaffles'
+    this.placementMode = 'automatic'; // 'automatic' or 'manual'
+    this.fieldMode = 'specified'; // 'computed' or 'specified'
+    this.manualFieldMode = 'computed'; // Remembered fieldMode when in 'manual' placement mode
     this.specifiedDField = 25;
     this.lastManualDField = null;
-    this.customBafflesSpecify = []; // Custom baffles in 'specify' mode: [{ id, z_tube, aperture_diameter?, autoDiameter }]
-    this.manualBaffles = []; // Manual baffles in 'fromBaffles' mode: [{ id, z_tube, aperture_diameter, autoDiameter }]
+    this.customBafflesSpecify = []; // Custom baffles in 'automatic' placement mode: [{ id, z_tube, aperture_diameter?, autoDiameter }]
+    this.manualBaffles = []; // Manual baffles in 'manual' placement mode: [{ id, z_tube, aperture_diameter, autoDiameter }]
     this.editingBaffleId = null;
     this.currentBaffleData = null;
     this.updatePending = false;
-    this.isDebugMode = this._checkDebugUrlParam();
 
     this._cacheDOM();
-    this._initDebugMode();
     this.resetToDefaults();
     this._bindEvents();
     this.update();
@@ -33,31 +33,12 @@ export class UIController {
     }, 100);
   }
 
-  _checkDebugUrlParam() {
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('debug')) {
-      const val = (params.get('debug') || '').toLowerCase();
-      return val !== 'false' && val !== '0';
-    }
-    if (params.has('debugMode')) {
-      const val = (params.get('debugMode') || '').toLowerCase();
-      return val !== 'false' && val !== '0';
-    }
-    return false;
-  }
-
-  _initDebugMode() {
-    if (this.dom.debugCard) {
-      this.dom.debugCard.style.display = this.isDebugMode ? 'block' : 'none';
-    }
-  }
-
   getActiveCustomBaffles() {
-    return this.fieldMode === 'fromBaffles' ? this.manualBaffles : this.customBafflesSpecify;
+    return this.placementMode === 'manual' ? this.manualBaffles : this.customBafflesSpecify;
   }
 
   setActiveCustomBaffles(list) {
-    if (this.fieldMode === 'fromBaffles') {
+    if (this.placementMode === 'manual') {
       this.manualBaffles = list;
     } else {
       this.customBafflesSpecify = list;
@@ -80,29 +61,85 @@ export class UIController {
     this.customBafflesSpecify = [];
     this.manualBaffles = [];
     this.editingBaffleId = null;
-    this.setFieldMode('specify', false);
+    this.manualFieldMode = 'computed';
+    this.setPlacementMode('automatic', false);
     this.dom.inputDField.value = 25;
   }
 
-  setFieldMode(mode, shouldUpdate = true) {
-    if (mode === 'fromBaffles' && this.fieldMode === 'specify') {
+  setPlacementMode(mode, shouldUpdate = true) {
+    if (this.fieldMode === 'specified') {
       const currentVal = parseFloat(this.dom.inputDField.value);
       if (!isNaN(currentVal)) {
         this.specifiedDField = currentVal;
       }
     }
 
-    this.fieldMode = mode;
+    this.placementMode = mode === 'manual' ? 'manual' : 'automatic';
     this.editingBaffleId = null;
+
+    if (this.placementMode === 'automatic') {
+      this.fieldMode = 'specified';
+    } else {
+      this.fieldMode = this.manualFieldMode;
+    }
+
+    this._syncModeControls();
+
+    if (shouldUpdate) {
+      this.update();
+    }
+  }
+
+  setFieldMode(mode, shouldUpdate = true) {
+    const normalized = mode === 'computed' ? 'computed' : 'specified';
+    if (this.placementMode === 'automatic' && normalized === 'computed') {
+      return;
+    }
+
+    if (normalized === 'computed' && this.fieldMode === 'specified') {
+      const currentVal = parseFloat(this.dom.inputDField.value);
+      if (!isNaN(currentVal)) {
+        this.specifiedDField = currentVal;
+      }
+    }
+
+    this.fieldMode = normalized;
+    if (this.placementMode === 'manual') {
+      this.manualFieldMode = normalized;
+    }
+    this.editingBaffleId = null;
+
+    this._syncModeControls();
+
+    if (shouldUpdate) {
+      this.update();
+    }
+  }
+
+  _syncModeControls() {
+    if (this.dom.placementModeControl) {
+      const buttons = this.dom.placementModeControl.querySelectorAll('.segment-btn');
+      buttons.forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === this.placementMode);
+      });
+    }
 
     if (this.dom.fieldModeControl) {
       const buttons = this.dom.fieldModeControl.querySelectorAll('.segment-btn');
       buttons.forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.mode === mode);
+        const fMode = btn.dataset.fieldMode;
+        btn.classList.toggle('active', fMode === this.fieldMode);
+        if (fMode === 'computed') {
+          const isAuto = this.placementMode === 'automatic';
+          btn.disabled = isAuto;
+          btn.title = isAuto
+            ? 'Switch Baffle Placement Mode to Manual to compute illuminated field from baffles'
+            : '';
+        }
       });
     }
 
-    if (mode === 'fromBaffles') {
+    if (this.fieldMode === 'computed') {
       this.dom.inputDField.type = 'text';
       this.dom.inputDField.readOnly = true;
       this.dom.inputDField.classList.add('readonly-field');
@@ -111,10 +148,6 @@ export class UIController {
       this.dom.inputDField.readOnly = false;
       this.dom.inputDField.classList.remove('readonly-field');
       this.dom.inputDField.value = this.specifiedDField;
-    }
-
-    if (shouldUpdate) {
-      this.update();
     }
   }
 
@@ -136,6 +169,7 @@ export class UIController {
       inputDTube: document.getElementById('inputDTube'),
       inputDField: document.getElementById('inputDField'),
       unitDField: document.getElementById('unitDField'),
+      placementModeControl: document.getElementById('placementModeControl'),
       fieldModeControl: document.getElementById('fieldModeControl'),
       inputLensOffset: document.getElementById('inputLensOffset'),
       inputTubeLength: document.getElementById('inputTubeLength'),
@@ -154,16 +188,34 @@ export class UIController {
       // Outputs
       baffleCountBadge: document.getElementById('baffleCountBadge'),
       baffleTableBody: document.querySelector('#baffleTable tbody'),
-      debugCard: document.getElementById('debugCard'),
-      debugJsonOutput: document.getElementById('debugJsonOutput'),
-      btnCopyDebugJson: document.getElementById('btnCopyDebugJson'),
 
       // Buttons & Toggles
       btnReset: document.getElementById('btnReset'),
       btnExportCSV: document.getElementById('btnExportCSV'),
+      btnExportJSON: document.getElementById('btnExportJSON'),
+      btnImportJSON: document.getElementById('btnImportJSON'),
       btnExportSVG: document.getElementById('btnExportSVG'),
       btnExportPNG: document.getElementById('btnExportPNG'),
       btnFitView: document.getElementById('btnFitView'),
+
+      // JSON Export Modal
+      exportJsonModal: document.getElementById('exportJsonModal'),
+      exportJsonTextarea: document.getElementById('exportJsonTextarea'),
+      btnCloseExportModalX: document.getElementById('btnCloseExportModalX'),
+      btnCloseExportModal: document.getElementById('btnCloseExportModal'),
+      btnCopyExportJson: document.getElementById('btnCopyExportJson'),
+      btnDownloadExportJson: document.getElementById('btnDownloadExportJson'),
+
+      // JSON Import Modal
+      importJsonModal: document.getElementById('importJsonModal'),
+      importJsonTextarea: document.getElementById('importJsonTextarea'),
+      importJsonError: document.getElementById('importJsonError'),
+      jsonDropZone: document.getElementById('jsonDropZone'),
+      jsonDropZoneText: document.getElementById('jsonDropZoneText'),
+      inputJsonFile: document.getElementById('inputJsonFile'),
+      btnCloseImportModalX: document.getElementById('btnCloseImportModalX'),
+      btnCancelImportModal: document.getElementById('btnCancelImportModal'),
+      btnApplyImportJson: document.getElementById('btnApplyImportJson'),
 
       chkLightCone: document.getElementById('chkLightCone'),
       chkRays: document.getElementById('chkRays'),
@@ -182,12 +234,23 @@ export class UIController {
       });
     }
 
+    if (this.dom.placementModeControl) {
+      this.dom.placementModeControl.querySelectorAll('.segment-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.mode;
+          if (mode && mode !== this.placementMode) {
+            this.setPlacementMode(mode, true);
+          }
+        });
+      });
+    }
+
     if (this.dom.fieldModeControl) {
       this.dom.fieldModeControl.querySelectorAll('.segment-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-          const mode = btn.dataset.mode;
-          if (mode && mode !== this.fieldMode) {
-            this.setFieldMode(mode, true);
+          const fMode = btn.dataset.fieldMode;
+          if (fMode && fMode !== this.fieldMode) {
+            this.setFieldMode(fMode, true);
           }
         });
       });
@@ -205,11 +268,11 @@ export class UIController {
 
     inputs.forEach(input => {
       input.addEventListener('input', () => {
-        if (input === this.dom.inputDField && this.fieldMode === 'fromBaffles') return;
+        if (input === this.dom.inputDField && this.fieldMode === 'computed') return;
         this.requestUpdate();
       });
       input.addEventListener('change', () => {
-        if (input === this.dom.inputDField && this.fieldMode === 'fromBaffles') return;
+        if (input === this.dom.inputDField && this.fieldMode === 'computed') return;
         this.requestUpdate();
       });
     });
@@ -238,7 +301,6 @@ export class UIController {
     toggles.forEach(t => {
       t.element.addEventListener('change', () => {
         this.renderer.setToggles({ [t.key]: t.element.checked });
-        this._updateDebugView();
       });
     });
 
@@ -306,7 +368,7 @@ export class UIController {
         initialDia = Math.max(0.1, Math.min(params.d_tube, params.d_tube - 2 * vaneHeight_mm));
       }
 
-      const defaultAuto = this.fieldMode === 'specify';
+      const defaultAuto = this.placementMode === 'automatic';
       const newBaffle = {
         id: `custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         z_tube: clampedZ,
@@ -346,7 +408,7 @@ export class UIController {
       const z_opt_target = target.z_tube + z_opt_front;
       let snappedDia = null;
 
-      if (this.fieldMode === 'specify') {
+      if (this.fieldMode === 'specified') {
         const b = this.currentBaffleData?.baffles.find(item => item.id === baffleId);
         if (b && b.expected_cone_diameter > 0) {
           snappedDia = b.expected_cone_diameter;
@@ -398,6 +460,18 @@ export class UIController {
       exportCSV(this.currentBaffleData, this.unit, this.precision);
     });
 
+    if (this.dom.btnExportJSON) {
+      this.dom.btnExportJSON.addEventListener('click', () => {
+        this.openExportModal();
+      });
+    }
+
+    if (this.dom.btnImportJSON) {
+      this.dom.btnImportJSON.addEventListener('click', () => {
+        this.openImportModal();
+      });
+    }
+
     this.dom.btnExportSVG.addEventListener('click', () => {
       exportSVG(this.currentBaffleData, this.precision);
     });
@@ -406,18 +480,183 @@ export class UIController {
       exportPNG(this.renderer.canvas);
     });
 
-    if (this.dom.btnCopyDebugJson) {
-      this.dom.btnCopyDebugJson.addEventListener('click', () => {
-        if (!this.dom.debugJsonOutput) return;
-        navigator.clipboard.writeText(this.dom.debugJsonOutput.value).then(() => {
-          const origText = this.dom.btnCopyDebugJson.textContent;
-          this.dom.btnCopyDebugJson.textContent = '✅ Copied!';
+    // Export JSON Modal Events
+    const closeExport = () => this.closeExportModal();
+    if (this.dom.btnCloseExportModalX) this.dom.btnCloseExportModalX.addEventListener('click', closeExport);
+    if (this.dom.btnCloseExportModal) this.dom.btnCloseExportModal.addEventListener('click', closeExport);
+    if (this.dom.exportJsonModal) {
+      this.dom.exportJsonModal.addEventListener('click', (e) => {
+        if (e.target === this.dom.exportJsonModal) closeExport();
+      });
+    }
+
+    if (this.dom.btnCopyExportJson) {
+      this.dom.btnCopyExportJson.addEventListener('click', () => {
+        if (!this.dom.exportJsonTextarea) return;
+        navigator.clipboard.writeText(this.dom.exportJsonTextarea.value).then(() => {
+          const origText = this.dom.btnCopyExportJson.textContent;
+          this.dom.btnCopyExportJson.textContent = '✅ Copied!';
           setTimeout(() => {
-            this.dom.btnCopyDebugJson.textContent = origText;
+            this.dom.btnCopyExportJson.textContent = origText;
           }, 1500);
         });
       });
     }
+
+    if (this.dom.btnDownloadExportJson) {
+      this.dom.btnDownloadExportJson.addEventListener('click', () => {
+        if (!this.dom.exportJsonTextarea) return;
+        exportJSONFile(this.dom.exportJsonTextarea.value, 'baffle_configuration.json');
+      });
+    }
+
+    // Import JSON Modal Events
+    const closeImport = () => this.closeImportModal();
+    if (this.dom.btnCloseImportModalX) this.dom.btnCloseImportModalX.addEventListener('click', closeImport);
+    if (this.dom.btnCancelImportModal) this.dom.btnCancelImportModal.addEventListener('click', closeImport);
+    if (this.dom.importJsonModal) {
+      this.dom.importJsonModal.addEventListener('click', (e) => {
+        if (e.target === this.dom.importJsonModal) closeImport();
+      });
+    }
+
+    const handleFileLoad = (file) => {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        if (this.dom.importJsonTextarea) {
+          this.dom.importJsonTextarea.value = String(ev.target.result || '');
+        }
+        if (this.dom.jsonDropZoneText) {
+          this.dom.jsonDropZoneText.innerHTML = `Loaded file: <strong>${file.name}</strong>`;
+        }
+        this._hideImportError();
+      };
+      reader.onerror = () => {
+        this._showImportError('Failed to read the selected file.');
+      };
+      reader.readAsText(file);
+    };
+
+    if (this.dom.jsonDropZone) {
+      this.dom.jsonDropZone.addEventListener('click', () => {
+        if (this.dom.inputJsonFile) this.dom.inputJsonFile.click();
+      });
+      this.dom.jsonDropZone.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (this.dom.inputJsonFile) this.dom.inputJsonFile.click();
+        }
+      });
+      ['dragenter', 'dragover'].forEach(evtName => {
+        this.dom.jsonDropZone.addEventListener(evtName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.dom.jsonDropZone.classList.add('drag-over');
+        });
+      });
+      ['dragleave', 'drop'].forEach(evtName => {
+        this.dom.jsonDropZone.addEventListener(evtName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.dom.jsonDropZone.classList.remove('drag-over');
+        });
+      });
+      this.dom.jsonDropZone.addEventListener('drop', (e) => {
+        const files = e.dataTransfer?.files;
+        if (files && files.length > 0) {
+          handleFileLoad(files[0]);
+        }
+      });
+    }
+
+    if (this.dom.inputJsonFile) {
+      this.dom.inputJsonFile.addEventListener('change', (e) => {
+        const files = e.target.files;
+        if (files && files.length > 0) {
+          handleFileLoad(files[0]);
+        }
+      });
+    }
+
+    if (this.dom.importJsonTextarea) {
+      this.dom.importJsonTextarea.addEventListener('input', () => {
+        this._hideImportError();
+      });
+    }
+
+    if (this.dom.btnApplyImportJson) {
+      this.dom.btnApplyImportJson.addEventListener('click', () => {
+        const raw = this.dom.importJsonTextarea ? this.dom.importJsonTextarea.value.trim() : '';
+        if (!raw) {
+          this._showImportError('Please paste JSON configuration or drop a .json file first.');
+          return;
+        }
+        try {
+          const parsed = JSON.parse(raw);
+          this.applyStateObject(parsed);
+          this.closeImportModal();
+        } catch (err) {
+          this._showImportError(`Invalid configuration JSON: ${err.message}`);
+        }
+      });
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (this.dom.exportJsonModal && this.dom.exportJsonModal.style.display !== 'none') {
+          this.closeExportModal();
+        }
+        if (this.dom.importJsonModal && this.dom.importJsonModal.style.display !== 'none') {
+          this.closeImportModal();
+        }
+      }
+    });
+  }
+
+  openExportModal() {
+    if (!this.dom.exportJsonModal || !this.dom.exportJsonTextarea) return;
+    this.dom.exportJsonTextarea.value = JSON.stringify(this.serializeState(), null, 2);
+    this.dom.exportJsonModal.style.display = 'flex';
+    this.dom.exportJsonTextarea.scrollTop = 0;
+  }
+
+  closeExportModal() {
+    if (this.dom.exportJsonModal) {
+      this.dom.exportJsonModal.style.display = 'none';
+    }
+  }
+
+  openImportModal() {
+    if (!this.dom.importJsonModal) return;
+    if (this.dom.importJsonTextarea) this.dom.importJsonTextarea.value = '';
+    if (this.dom.inputJsonFile) this.dom.inputJsonFile.value = '';
+    if (this.dom.jsonDropZoneText) {
+      this.dom.jsonDropZoneText.innerHTML = '<strong>Drag &amp; drop a JSON file here</strong>, or <span class="drop-zone-browse">click to browse</span>';
+    }
+    this._hideImportError();
+    this.dom.importJsonModal.style.display = 'flex';
+    if (this.dom.importJsonTextarea) {
+      this.dom.importJsonTextarea.focus();
+    }
+  }
+
+  closeImportModal() {
+    if (this.dom.importJsonModal) {
+      this.dom.importJsonModal.style.display = 'none';
+    }
+  }
+
+  _showImportError(msg) {
+    if (!this.dom.importJsonError) return;
+    this.dom.importJsonError.textContent = msg;
+    this.dom.importJsonError.style.display = 'block';
+  }
+
+  _hideImportError() {
+    if (!this.dom.importJsonError) return;
+    this.dom.importJsonError.textContent = '';
+    this.dom.importJsonError.style.display = 'none';
   }
 
   highlightTableRow(baffleNumber) {
@@ -432,7 +671,7 @@ export class UIController {
   }
 
   getInputs() {
-    if (this.fieldMode === 'specify') {
+    if (this.fieldMode === 'specified') {
       const parsedField = parseFloat(this.dom.inputDField.value);
       if (!isNaN(parsedField)) {
         this.specifiedDField = parsedField;
@@ -444,6 +683,7 @@ export class UIController {
       d_tube: parseFloat(this.dom.inputDTube.value) || 67.3,
       d_field: this.specifiedDField,
       fallback_d_field: this.lastManualDField,
+      placementMode: this.placementMode,
       fieldMode: this.fieldMode,
       lens_offset: parseFloat(this.dom.inputLensOffset.value) || -3,
       tube_length: parseFloat(this.dom.inputTubeLength.value) || 1008,
@@ -454,7 +694,7 @@ export class UIController {
   update() {
     const params = this.getInputs();
     this.currentBaffleData = calculateBaffles(params, this.getActiveCustomBaffles());
-    if (this.fieldMode === 'fromBaffles' && this.currentBaffleData.params.d_field > 0) {
+    if (this.placementMode === 'manual' && this.fieldMode === 'computed' && this.currentBaffleData.params.d_field > 0) {
       this.lastManualDField = this.currentBaffleData.params.d_field;
     }
 
@@ -473,7 +713,7 @@ export class UIController {
       this.dom.unitDField.textContent = uLabel;
     }
 
-    if (this.fieldMode === 'fromBaffles') {
+    if (this.fieldMode === 'computed') {
       const computedDField = this.currentBaffleData.params.d_field;
       const isClipped = this.currentBaffleData.params.isClippedField;
       if (isClipped) {
@@ -509,21 +749,19 @@ export class UIController {
 
     // Populate Baffle Table
     this._renderTable();
-
-    // Update Debug JSON View if active
-    this._updateDebugView();
   }
 
-  _updateDebugView() {
-    if (!this.isDebugMode || !this.dom.debugJsonOutput || !this.currentBaffleData) return;
+  serializeState() {
+    if (!this.currentBaffleData) return {};
 
     const { params, opticalBounds, lightCone, baffles, visibleWallSections = [] } = this.currentBaffleData;
-    const debugState = {
+    return {
       configuration: {
+        placementMode: this.placementMode,
+        fieldMode: this.fieldMode,
         unit: this.unit,
         precision: this.precision,
         algorithm: params.algorithm,
-        fieldMode: this.fieldMode,
         layerToggles: { ...this.renderer.toggles }
       },
       opticalGeometry: {
@@ -556,12 +794,181 @@ export class UIController {
         aperture_diameter_mm: Number(b.aperture_diameter.toFixed(4)),
         wall_height_mm: Number(b.wall_height.toFixed(4)),
         isClipping: Boolean(b.isClipping),
-        expected_cone_diameter_mm: b.expected_cone_diameter !== undefined ? Number(b.expected_cone_diameter.toFixed(4)) : undefined,
-        min_axial_diameter_mm: b.min_axial_diameter !== undefined ? Number(b.min_axial_diameter.toFixed(4)) : undefined
+        expected_cone_diameter_mm: b.expected_cone_diameter !== undefined && b.expected_cone_diameter !== null
+          ? Number(b.expected_cone_diameter.toFixed(4))
+          : undefined,
+        min_axial_diameter_mm: b.min_axial_diameter !== undefined && b.min_axial_diameter !== null
+          ? Number(b.min_axial_diameter.toFixed(4))
+          : undefined
       }))
     };
+  }
 
-    this.dom.debugJsonOutput.value = JSON.stringify(debugState, null, 2);
+  applyStateObject(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new Error('Root JSON value must be an object.');
+    }
+    const hasKnownSection = Boolean(
+      data.configuration || data.opticalGeometry || data.mechanicalGeometry || Array.isArray(data.baffles)
+    );
+    if (!hasKnownSection) {
+      throw new Error('JSON must contain configuration, opticalGeometry, mechanicalGeometry, or baffles.');
+    }
+
+    // 1. Configuration
+    let targetPlacementMode = this.placementMode;
+    let targetFieldMode = this.fieldMode;
+    if (data.configuration && typeof data.configuration === 'object') {
+      const cfg = data.configuration;
+      if (cfg.unit === 'mm' || cfg.unit === 'in') {
+        this.unit = cfg.unit;
+        if (this.dom.selectUnit) this.dom.selectUnit.value = cfg.unit;
+      }
+      if (cfg.precision !== undefined && !isNaN(Number(cfg.precision))) {
+        const p = Math.max(0, Math.min(3, parseInt(cfg.precision, 10)));
+        this.precision = p;
+        if (this.dom.selectPrecision) this.dom.selectPrecision.value = String(p);
+      }
+      if (cfg.algorithm === 'strictZeroWall' || cfg.algorithm === 'minimumBaffle') {
+        if (this.dom.selectAlgorithm) this.dom.selectAlgorithm.value = cfg.algorithm;
+      }
+      if (cfg.placementMode === 'automatic' || cfg.placementMode === 'manual') {
+        targetPlacementMode = cfg.placementMode;
+        if (cfg.fieldMode === 'computed' || cfg.fieldMode === 'specified') {
+          targetFieldMode = cfg.fieldMode;
+        } else {
+          targetFieldMode = targetPlacementMode === 'automatic' ? 'specified' : 'computed';
+        }
+      } else if (cfg.fieldMode === 'fromBaffles' || cfg.fieldMode === 'computed') {
+        targetPlacementMode = 'manual';
+        targetFieldMode = 'computed';
+      } else if (cfg.fieldMode === 'specify' || cfg.fieldMode === 'specified') {
+        targetPlacementMode = 'automatic';
+        targetFieldMode = 'specified';
+      }
+      if (targetPlacementMode === 'automatic') {
+        targetFieldMode = 'specified';
+      }
+      if (cfg.layerToggles && typeof cfg.layerToggles === 'object') {
+        const lt = cfg.layerToggles;
+        const nextToggles = {};
+        if (typeof lt.lightCone === 'boolean') {
+          nextToggles.lightCone = lt.lightCone;
+          if (this.dom.chkLightCone) this.dom.chkLightCone.checked = lt.lightCone;
+        }
+        if (typeof lt.rays === 'boolean') {
+          nextToggles.rays = lt.rays;
+          if (this.dom.chkRays) this.dom.chkRays.checked = lt.rays;
+        }
+        if (typeof lt.baffles === 'boolean') {
+          nextToggles.baffles = lt.baffles;
+          if (this.dom.chkBaffles) this.dom.chkBaffles.checked = lt.baffles;
+        }
+        if (typeof lt.labels === 'boolean') {
+          nextToggles.labels = lt.labels;
+          if (this.dom.chkLabels) this.dom.chkLabels.checked = lt.labels;
+        }
+        if (typeof lt.grid === 'boolean') {
+          nextToggles.grid = lt.grid;
+          if (this.dom.chkGrid) this.dom.chkGrid.checked = lt.grid;
+        }
+        if (typeof lt.shadows === 'boolean') {
+          nextToggles.shadows = lt.shadows;
+        }
+        this.renderer.setToggles(nextToggles);
+      }
+    }
+
+    // 2. Optical Geometry
+    if (data.opticalGeometry && typeof data.opticalGeometry === 'object') {
+      const opt = data.opticalGeometry;
+      const dObj = Number(opt.d_obj_mm ?? opt.d_obj);
+      if (!isNaN(dObj) && dObj > 0 && this.dom.inputDObj) {
+        this.dom.inputDObj.value = dObj;
+      }
+      const focal = Number(opt.focal_length_mm ?? opt.focal_length);
+      if (!isNaN(focal) && focal > 0 && this.dom.inputFocalLength) {
+        this.dom.inputFocalLength.value = focal;
+      }
+      const dFieldSpec = Number(opt.d_field_specified_mm ?? opt.d_field);
+      if (!isNaN(dFieldSpec) && dFieldSpec >= 0) {
+        this.specifiedDField = dFieldSpec;
+      }
+      const dFieldEff = Number(opt.d_field_effective_mm);
+      if (!isNaN(dFieldEff) && dFieldEff > 0) {
+        this.lastManualDField = dFieldEff;
+      }
+    }
+
+    // 3. Mechanical Geometry
+    if (data.mechanicalGeometry && typeof data.mechanicalGeometry === 'object') {
+      const mech = data.mechanicalGeometry;
+      const dTube = Number(mech.d_tube_mm ?? mech.d_tube);
+      if (!isNaN(dTube) && dTube > 0 && this.dom.inputDTube) {
+        this.dom.inputDTube.value = dTube;
+      }
+      const tubeLen = Number(mech.tube_length_mm ?? mech.tube_length);
+      if (!isNaN(tubeLen) && tubeLen > 0 && this.dom.inputTubeLength) {
+        this.dom.inputTubeLength.value = tubeLen;
+      }
+      const lensOff = Number(mech.lens_offset_mm ?? mech.lens_offset);
+      if (!isNaN(lensOff) && this.dom.inputLensOffset) {
+        this.dom.inputLensOffset.value = lensOff;
+      }
+    }
+
+    // 4. Baffles
+    if (Array.isArray(data.baffles)) {
+      const parsedBaffles = data.baffles
+        .map((b, idx) => {
+          if (!b || typeof b !== 'object') return null;
+          const z_tube = Number(b.z_tube_mm ?? b.z_tube);
+          const aperture_diameter = Number(b.aperture_diameter_mm ?? b.aperture_diameter);
+          if (isNaN(z_tube)) return null;
+          const rawId = b.id && !String(b.id).startsWith('calc_')
+            ? String(b.id)
+            : `custom_${Date.now()}_${idx}`;
+          return {
+            id: rawId,
+            isCustom: b.isCustom,
+            z_tube,
+            aperture_diameter: isNaN(aperture_diameter) ? undefined : aperture_diameter,
+            autoDiameter: Boolean(b.autoDiameter)
+          };
+        })
+        .filter(Boolean);
+
+      if (targetPlacementMode === 'manual') {
+        this.manualBaffles = parsedBaffles.map(b => ({
+          id: b.id,
+          z_tube: b.z_tube,
+          aperture_diameter: b.aperture_diameter,
+          autoDiameter: b.autoDiameter
+        }));
+        this.customBafflesSpecify = [];
+      } else {
+        this.customBafflesSpecify = parsedBaffles
+          .filter(b => b.isCustom !== false)
+          .map(b => ({
+            id: b.id,
+            z_tube: b.z_tube,
+            aperture_diameter: b.aperture_diameter,
+            autoDiameter: b.autoDiameter
+          }));
+        this.manualBaffles = [];
+      }
+    }
+
+    // 5. Apply placement mode and field mode, recompute, and fit canvas view
+    if (targetPlacementMode === 'manual') {
+      this.manualFieldMode = targetFieldMode;
+    }
+    this.placementMode = targetPlacementMode;
+    this.fieldMode = targetFieldMode;
+    this.editingBaffleId = null;
+    this._syncModeControls();
+    this.update();
+    this.renderer.fitToView();
   }
 
   _renderTable() {
@@ -573,7 +980,7 @@ export class UIController {
     const customCount = baffles.filter(b => b.isCustom).length;
     const clippingCount = baffles.filter(b => b.isClipping).length;
 
-    if (this.fieldMode === 'fromBaffles') {
+    if (this.placementMode === 'manual') {
       const statusSuffix = clippingCount > 0 ? ` (${clippingCount} Clipping)` : '';
       this.dom.baffleCountBadge.textContent = `${baffles.length} Manual Baffle${baffles.length === 1 ? '' : 's'}${statusSuffix}`;
       this.dom.baffleCountBadge.style.color = clippingCount > 0 ? '#ef4444' : 'var(--accent-emerald)';
@@ -794,14 +1201,14 @@ export class UIController {
     placeholderTr.style.background = 'rgba(168, 85, 247, 0.05)';
     placeholderTr.style.borderTop = '1px dashed rgba(168, 85, 247, 0.3)';
 
-    const isFromBaffles = this.fieldMode === 'fromBaffles';
+    const isManualPlacement = this.placementMode === 'manual';
     const hasExistingCone = Boolean(
       this.currentBaffleData &&
       this.currentBaffleData.lightCone &&
       this.currentBaffleData.lightCone.hasLightCone
     );
-    const defaultAddAuto = !isFromBaffles;
-    const diaPlaceholder = isFromBaffles
+    const defaultAddAuto = !isManualPlacement;
+    const diaPlaceholder = isManualPlacement
       ? (hasExistingCone ? 'Auto-snap (or Ø...)' : 'Inner Ø...')
       : 'Auto (snapped)';
 
@@ -870,7 +1277,7 @@ export class UIController {
       }
 
       const hasDiaInput = valDiaDisplay !== null && !isNaN(valDiaDisplay) && valDiaDisplay > 0;
-      if (isFromBaffles && !hasDiaInput && !hasExistingCone) {
+      if (this.fieldMode === 'computed' && !hasDiaInput && !hasExistingCone) {
         if (inputAddDia) {
           inputAddDia.style.borderColor = '#ef4444';
           inputAddDia.focus();

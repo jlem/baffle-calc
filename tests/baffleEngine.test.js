@@ -233,3 +233,43 @@ test('autoDiameter keeps custom and manual baffles snapped to the active light c
   assert.ok(Math.abs(snapped.aperture_diameter - 51.25) < 1e-4);
 });
 
+test('Manual placement + Specified field mode: creates initial ray and keeps specified field invariant to baffle height changes', () => {
+  // 1. With 0 manual baffles, light cone and initial front-lip guide ray are present
+  const emptyManualSpec = calculateBaffles(
+    {
+      ...BASE_PARAMS,
+      placementMode: 'manual',
+      fieldMode: 'specified',
+      algorithm: ALGORITHM_MODES.STRICT_ZERO_WALL
+    },
+    []
+  );
+
+  assert.equal(emptyManualSpec.params.placementMode, 'manual');
+  assert.equal(emptyManualSpec.params.fieldMode, 'specified');
+  assert.equal(emptyManualSpec.params.d_field, 25);
+  assert.equal(emptyManualSpec.lightCone.hasLightCone, true);
+  assert.equal(emptyManualSpec.baffles.length, 0);
+  assert.equal(emptyManualSpec.rays.length, 1);
+  assert.ok(Math.abs(emptyManualSpec.rays[0].baffleHit.z_tube - 154.09) < 0.05);
+
+  // 2. Changing manual baffle diameter does not alter the specified illuminated field
+  const resizedManualSpec = calculateBaffles(
+    {
+      ...BASE_PARAMS,
+      placementMode: 'manual',
+      fieldMode: 'specified',
+      algorithm: ALGORITHM_MODES.STRICT_ZERO_WALL
+    },
+    [{ id: 'm1', z_tube: 597, aperture_diameter: 20, autoDiameter: false }]
+  );
+
+  assert.equal(resizedManualSpec.params.d_field, 25);
+  assert.equal(resizedManualSpec.params.isClippedField, false);
+  assert.equal(resizedManualSpec.lightCone.hasLightCone, true);
+  assert.equal(resizedManualSpec.baffles.length, 1);
+  assert.equal(resizedManualSpec.baffles[0].aperture_diameter, 20);
+  assert.equal(resizedManualSpec.rays.length, 2); // Initial front-lip ray + Baffle #1 ray
+});
+
+
